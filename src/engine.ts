@@ -4,16 +4,23 @@
  * Implements OpenClaw's ContextEngine interface with:
  * - Structured compaction via Haiku (replaces OpenClaw's built-in compaction)
  * - Auto-flush every turn to daily transcript files
- * - Auto-retrieval via BM25 on every assemble() call
+ * - Auto-retrieval via QMD hybrid search on every assemble() call
  *
  * This engine owns compaction (ownsCompaction: true), meaning OpenClaw
  * will not run its own compaction when this engine is active.
+ *
+ * QMD lifecycle:
+ * - bootstrap() initializes the QMD collection and starts the daemon
+ * - Daemon startup is best-effort: if QMD is not installed, search returns ""
+ * - dispose() clears the client reference (daemon keeps running independently)
  */
 
+import { join } from "node:path";
 import type { AgentMessage, LiaConfig, LiaDependencies } from "./types.js";
 import { compactMessages, estimateMessageTokens } from "./compact.js";
 import { writeTranscript } from "./auto-flush.js";
-import { searchForContext } from "./search.js";
+import { searchForContext, searchMemory } from "./search.js";
+import { QMDClient } from "./qmd-client.js";
 
 /** Per-session state tracked by the engine. */
 interface SessionState {
@@ -33,7 +40,7 @@ interface SessionState {
  * The Lia Context Engine for OpenClaw.
  *
  * Lifecycle:
- * 1. bootstrap() — called when a session starts, initializes state
+ * 1. bootstrap() — called when a session starts, initializes state + QMD
  * 2. ingest() — called for each new message, writes to transcript
  * 3. assemble() — called before each model run, returns messages + auto-retrieval
  * 4. afterTurn() — called after each turn, checks if compaction needed
@@ -53,14 +60,22 @@ export class LiaContextEngine {
   private deps: LiaDependencies;
   private sessions: Map<string, SessionState> = new Map();
 
+  /** QMD client — null until bootstrap() is called. */
+  private qmdClient: QMDClient | null = null;
+  /** Whether the QMD HTTP daemon is currently reachable. */
+  private daemonRunning = false;
+
   constructor(config: LiaConfig, deps: LiaDependencies) {
     this.config = config;
     this.deps = deps;
   }
 
   /**
-   * Initialize session state and create memory directories.
+   * Initialize session state, create memory directories, and start QMD.
    * Called when a new session starts.
+   *
+   * QMD bootstrap is best-effort: failures are logged but do not prevent
+   * the engine from functioning (search will return "" gracefully).
    */
   async bootstrap(params: {
     sessionId: string;
@@ -77,15 +92,44 @@ export class LiaContextEngine {
     }
 
     // Create memory directories if they don't exist
+    let memoryDir: string;
     try {
       const { mkdir } = await import("node:fs/promises");
-      const { join } = await import("node:path");
-      const memoryDir = join(workspaceDir, "memory");
+      memoryDir = join(workspaceDir, "memory");
       const dailyDir = join(memoryDir, "daily");
       await mkdir(dailyDir, { recursive: true });
     } catch (err) {
       this.deps.logger.warn(`[lia-memory-engine] Failed to create memory directories:`, err);
       // Non-fatal — directories may already exist or will be created on first write
+      memoryDir = join(workspaceDir, "memory");
+    }
+
+    // Lazily initialize QMD client (shared across all sessions on this engine instance)
+    if (this.qmdClient === null) {
+      try {
+        this.qmdClient = new QMDClient({
+          host: this.config.qmdHost,
+          port: this.config.qmdPort,
+          collectionName: this.config.qmdCollectionName,
+          memoryDir,
+          enableVectorSearch: this.config.enableVectorSearch,
+          logger: this.deps.logger,
+        });
+      } catch (err) {
+        // Only throws if memoryDir is not absolute — log and continue without QMD
+        this.deps.logger.warn("[lia-memory-engine] Failed to initialize QMD client:", err);
+      }
+    }
+
+    if (this.qmdClient !== null) {
+      // Register the collection (non-fatal if already registered or qmd not installed)
+      await this.qmdClient.ensureCollection();
+
+      // Start the daemon and record whether it came up successfully
+      this.daemonRunning = await this.qmdClient.startDaemon();
+
+      // Kick off background embedding — fire and forget
+      this.qmdClient.embedBackground();
     }
 
     this.sessions.set(sessionId, {
@@ -132,6 +176,8 @@ export class LiaContextEngine {
   /**
    * Assemble messages for the next model run.
    * Returns all session messages + auto-retrieval context as systemPromptAddition.
+   *
+   * Auto-retrieval uses QMD search, guarded by a timeout so it never blocks the agent.
    */
   async assemble(params: {
     sessionId: string;
@@ -150,15 +196,15 @@ export class LiaContextEngine {
     // Auto-retrieval: search memory files for relevant context
     let systemPromptAddition: string | undefined;
 
-    if (this.config.enabled && this.config.autoRetrieval && messages.length > 0) {
-      // Use the last user message as the search query
+    if (this.config.enabled && this.config.autoRetrieval && messages.length > 0 && this.qmdClient !== null) {
       const lastUserMessage = this.findLastUserMessage(messages);
       if (lastUserMessage) {
         try {
           const context = await searchForContext(
-            session.workspaceDir,
+            this.qmdClient,
             lastUserMessage,
-            this.config.autoRetrievalTimeoutMs
+            this.config.autoRetrievalTimeoutMs,
+            this.daemonRunning
           );
           if (context) {
             systemPromptAddition = `\n\n--- Relevant context from memory ---\n${context}\n--- End memory context ---`;
@@ -296,11 +342,28 @@ export class LiaContextEngine {
   }
 
   /**
+   * Explicit memory search — called by the memory_search tool.
+   * Uses full hybrid search (BM25 + vec + HyDE) for best quality.
+   * Returns empty string if QMD client is not initialized or search fails.
+   */
+  async search(params: { sessionId: string; query: string }): Promise<string> {
+    if (this.qmdClient === null) {
+      return "";
+    }
+
+    return searchMemory(this.qmdClient, params.query, this.daemonRunning);
+  }
+
+  /**
    * Cleanup when the engine is being shut down.
+   * The QMD daemon runs independently and is not stopped here
+   * (it may be shared across plugin reloads).
    */
   async dispose(): Promise<void> {
     this.deps.logger.info(`[lia-memory-engine] Disposing (${this.sessions.size} active sessions)`);
     this.sessions.clear();
+    this.qmdClient = null;
+    this.daemonRunning = false;
   }
 
   // ── Private helpers ─────────────────────────────────────────────────────────
@@ -350,8 +413,9 @@ export class LiaContextEngine {
           // Find first text block
           for (const block of content) {
             if (typeof block === "string") return block;
-            if ((block as any).type === "text" && (block as any).text) {
-              return (block as any).text;
+            if ((block as { type?: string; text?: string }).type === "text" &&
+                (block as { type?: string; text?: string }).text) {
+              return (block as { type?: string; text?: string }).text!;
             }
           }
         }

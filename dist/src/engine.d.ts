@@ -4,17 +4,22 @@
  * Implements OpenClaw's ContextEngine interface with:
  * - Structured compaction via Haiku (replaces OpenClaw's built-in compaction)
  * - Auto-flush every turn to daily transcript files
- * - Auto-retrieval via BM25 on every assemble() call
+ * - Auto-retrieval via QMD hybrid search on every assemble() call
  *
  * This engine owns compaction (ownsCompaction: true), meaning OpenClaw
  * will not run its own compaction when this engine is active.
+ *
+ * QMD lifecycle:
+ * - bootstrap() initializes the QMD collection and starts the daemon
+ * - Daemon startup is best-effort: if QMD is not installed, search returns ""
+ * - dispose() clears the client reference (daemon keeps running independently)
  */
 import type { AgentMessage, LiaConfig, LiaDependencies } from "./types.js";
 /**
  * The Lia Context Engine for OpenClaw.
  *
  * Lifecycle:
- * 1. bootstrap() — called when a session starts, initializes state
+ * 1. bootstrap() — called when a session starts, initializes state + QMD
  * 2. ingest() — called for each new message, writes to transcript
  * 3. assemble() — called before each model run, returns messages + auto-retrieval
  * 4. afterTurn() — called after each turn, checks if compaction needed
@@ -32,10 +37,17 @@ export declare class LiaContextEngine {
     private config;
     private deps;
     private sessions;
+    /** QMD client — null until bootstrap() is called. */
+    private qmdClient;
+    /** Whether the QMD HTTP daemon is currently reachable. */
+    private daemonRunning;
     constructor(config: LiaConfig, deps: LiaDependencies);
     /**
-     * Initialize session state and create memory directories.
+     * Initialize session state, create memory directories, and start QMD.
      * Called when a new session starts.
+     *
+     * QMD bootstrap is best-effort: failures are logged but do not prevent
+     * the engine from functioning (search will return "" gracefully).
      */
     bootstrap(params: {
         sessionId: string;
@@ -56,6 +68,8 @@ export declare class LiaContextEngine {
     /**
      * Assemble messages for the next model run.
      * Returns all session messages + auto-retrieval context as systemPromptAddition.
+     *
+     * Auto-retrieval uses QMD search, guarded by a timeout so it never blocks the agent.
      */
     assemble(params: {
         sessionId: string;
@@ -87,7 +101,18 @@ export declare class LiaContextEngine {
         needsCompaction: boolean;
     }>;
     /**
+     * Explicit memory search — called by the memory_search tool.
+     * Uses full hybrid search (BM25 + vec + HyDE) for best quality.
+     * Returns empty string if QMD client is not initialized or search fails.
+     */
+    search(params: {
+        sessionId: string;
+        query: string;
+    }): Promise<string>;
+    /**
      * Cleanup when the engine is being shut down.
+     * The QMD daemon runs independently and is not stopped here
+     * (it may be shared across plugin reloads).
      */
     dispose(): Promise<void>;
     /**

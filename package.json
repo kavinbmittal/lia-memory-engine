@@ -41,9 +41,7 @@
   "peerDependencies": {
     "openclaw": "*"
   },
-  "dependencies": {
-    "okapibm25": "^1.3.0"
-  },
+  "dependencies": {},
   "devDependencies": {
     "tsx": "^4.21.0",
     "typescript": "^5.0.0"
