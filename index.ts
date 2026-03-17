@@ -17,12 +17,7 @@ import { searchMemory, formatSearchResults } from "./src/search.js";
 import type { LiaConfig } from "./src/types.js";
 import { DEFAULT_CONFIG } from "./src/types.js";
 
-export const id = "lia-memory-engine";
-export const name = "Lia Memory Engine";
-export const description = "Lia-style context engine — structured compaction, auto-flush, BM25 auto-retrieval";
-
-/** JSON Schema for plugin configuration (mirrors openclaw.plugin.json). */
-export const configSchema = {
+const configSchema = {
   type: "object",
   properties: {
     enabled: { type: "boolean", default: true },
@@ -36,18 +31,10 @@ export const configSchema = {
 
 /**
  * Plugin registration function — called by OpenClaw when the plugin is loaded.
- *
- * @param api - The OpenClaw plugin API. Provides:
- *   - api.registerContextEngine(engine) — register as the context engine
- *   - api.registerTool(toolDef, options) — register agent tools
- *   - api.config — plugin and global config
- *   - api.log — structured logger
- *   - api.resolvePath(relativePath) — resolve workspace-relative paths
- *   - api.completeSimple?.(model, systemPrompt, userContent) — LLM access
  */
-export default function register(api: any): void {
+function register(api: any): void {
   // Parse config with defaults
-  const pluginConfig = api.config?.plugins?.entries?.[id]?.config ?? {};
+  const pluginConfig = api.config?.plugins?.entries?.["lia-memory-engine"]?.config ?? {};
   const config: LiaConfig = {
     enabled: pluginConfig.enabled ?? DEFAULT_CONFIG.enabled,
     compactionThreshold: pluginConfig.compactionThreshold ?? DEFAULT_CONFIG.compactionThreshold,
@@ -143,9 +130,9 @@ export default function register(api: any): void {
     resolveWorkspaceDir,
   });
 
-  // Register as context engine
+  // Register as context engine — OpenClaw expects (id, factory) signature
   if (typeof api.registerContextEngine === "function") {
-    api.registerContextEngine(engine);
+    api.registerContextEngine("lia-memory-engine", () => engine);
     logger.info("[lia-memory-engine] Registered as context engine");
   } else {
     logger.warn(
@@ -242,3 +229,18 @@ function registerMemorySearchTool(
 
   logger.info("[lia-memory-engine] Registered memory_search tool");
 }
+
+/** Plugin default export — matches OpenClaw's expected plugin object shape. */
+const liaPlugin = {
+  id: "lia-memory-engine",
+  name: "Lia Memory Engine",
+  description: "Lia-style context engine — structured compaction, auto-flush, BM25 auto-retrieval",
+  configSchema: {
+    parse(value: unknown) {
+      return value ?? {};
+    },
+  },
+  register,
+};
+
+export default liaPlugin;
