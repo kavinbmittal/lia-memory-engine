@@ -46,6 +46,11 @@ export interface LiaDependencies {
      * Returns the absolute path to the agent's workspace directory.
      */
     resolveWorkspaceDir: (sessionId: string) => string;
+    /**
+     * Optional QMD client override — inject for testing or custom implementations.
+     * When provided, the engine uses this directly and skips daemon lifecycle.
+     */
+    qmdClient?: import("./qmd-client.js").QMDClient;
 }
 /**
  * A message in the agent's conversation.

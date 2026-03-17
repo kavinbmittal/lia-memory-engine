@@ -106,18 +106,23 @@ export class LiaContextEngine {
 
     // Lazily initialize QMD client (shared across all sessions on this engine instance)
     if (this.qmdClient === null) {
-      try {
-        this.qmdClient = new QMDClient({
-          host: this.config.qmdHost,
-          port: this.config.qmdPort,
-          collectionName: this.config.qmdCollectionName,
-          memoryDir,
-          enableVectorSearch: this.config.enableVectorSearch,
-          logger: this.deps.logger,
-        });
-      } catch (err) {
-        // Only throws if memoryDir is not absolute — log and continue without QMD
-        this.deps.logger.warn("[lia-memory-engine] Failed to initialize QMD client:", err);
+      // Use injected client (e.g. in tests) or create a real one
+      if (this.deps.qmdClient !== undefined) {
+        this.qmdClient = this.deps.qmdClient;
+      } else {
+        try {
+          this.qmdClient = new QMDClient({
+            host: this.config.qmdHost,
+            port: this.config.qmdPort,
+            collectionName: this.config.qmdCollectionName,
+            memoryDir,
+            enableVectorSearch: this.config.enableVectorSearch,
+            logger: this.deps.logger,
+          });
+        } catch (err) {
+          // Only throws if memoryDir is not absolute — log and continue without QMD
+          this.deps.logger.warn("[lia-memory-engine] Failed to initialize QMD client:", err);
+        }
       }
     }
 
@@ -125,8 +130,11 @@ export class LiaContextEngine {
       // Register the collection (non-fatal if already registered or qmd not installed)
       await this.qmdClient.ensureCollection();
 
-      // Start the daemon and record whether it came up successfully
-      this.daemonRunning = await this.qmdClient.startDaemon();
+      // Start the daemon and record whether it came up successfully.
+      // Skipped for injected clients (tests/custom) — they control their own state.
+      if (this.deps.qmdClient === undefined) {
+        this.daemonRunning = await this.qmdClient.startDaemon();
+      }
 
       // Kick off background embedding — fire and forget
       this.qmdClient.embedBackground();
