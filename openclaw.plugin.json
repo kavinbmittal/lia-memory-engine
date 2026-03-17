@@ -1,0 +1,71 @@
+{
+  "id": "lia-memory-engine",
+  "name": "Lia Memory Engine",
+  "version": "1.0.0",
+  "description": "Lia-style context engine for OpenClaw — structured compaction via Haiku, auto-flush transcripts, BM25 auto-retrieval, and memory_search tool.",
+  "configSchema": {
+    "type": "object",
+    "properties": {
+      "enabled": {
+        "type": "boolean",
+        "description": "Enable or disable the Lia Memory Engine",
+        "default": true
+      },
+      "compactionThreshold": {
+        "type": "number",
+        "description": "Fraction of context window that triggers compaction (0-1)",
+        "default": 0.80,
+        "minimum": 0.1,
+        "maximum": 1.0
+      },
+      "compactionModel": {
+        "type": "string",
+        "description": "Model to use for compaction summarization",
+        "default": "anthropic/claude-haiku-4-5"
+      },
+      "autoRetrieval": {
+        "type": "boolean",
+        "description": "Automatically search memory files and inject relevant context on every turn",
+        "default": true
+      },
+      "autoRetrievalTimeoutMs": {
+        "type": "number",
+        "description": "Timeout in milliseconds for auto-retrieval search (keeps agent responsive)",
+        "default": 500,
+        "minimum": 100,
+        "maximum": 5000
+      },
+      "transcriptRetentionDays": {
+        "type": "number",
+        "description": "Number of days to retain daily transcript files",
+        "default": 180,
+        "minimum": 1
+      }
+    },
+    "required": []
+  },
+  "uiHints": {
+    "enabled": {
+      "label": "Enabled"
+    },
+    "compactionThreshold": {
+      "label": "Compaction Threshold",
+      "placeholder": "0.80"
+    },
+    "compactionModel": {
+      "label": "Compaction Model",
+      "placeholder": "anthropic/claude-haiku-4-5"
+    },
+    "autoRetrieval": {
+      "label": "Auto-Retrieval"
+    },
+    "autoRetrievalTimeoutMs": {
+      "label": "Auto-Retrieval Timeout (ms)",
+      "placeholder": "500"
+    },
+    "transcriptRetentionDays": {
+      "label": "Transcript Retention (days)",
+      "placeholder": "180"
+    }
+  }
+}
