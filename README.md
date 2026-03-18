@@ -86,7 +86,7 @@ qmd embed -c lia-memory
 
 If you’re starting fresh with no prior transcripts, skip this — the plugin will handle it on bootstrap.
 
-### 5. Add to OpenClaw config
+### 5. Add the Engine to OpenClaw config
 
 In `~/.openclaw/openclaw.json`, add the minimum viable config:
 
@@ -114,7 +114,7 @@ On first session start, the plugin starts the QMD daemon automatically. Models s
 
 See [Configuration](#configuration) for all available options and recommended session settings.
 
-## Configuration
+### 6. Set Engine Parameters in OpenClaw Config
 
 All options go under `plugins.entries.lia-memory-engine.config` in `openclaw.json`:
 
@@ -150,7 +150,7 @@ To disable vector search and use BM25 only (no model download required):
 { “enableVectorSearch”: false }
 ```
 
-### Recommended: session reset policy
+### 7. Make a note of OpenClaw Session Reset Config
 
 The plugin handles compaction (in-place summarization, no reset), but OpenClaw’s session reset policy is separate. Without configuring it, sessions may reset unexpectedly and lose context that the plugin has been carefully preserving.
 
