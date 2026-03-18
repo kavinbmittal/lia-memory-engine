@@ -59,7 +59,7 @@
       "enableVectorSearch": {
         "type": "boolean",
         "description": "Enable vector semantic search (requires GGUF model download on first run)",
-        "default": false
+        "default": true
       }
     },
     "required": []

@@ -16,6 +16,6 @@ export const DEFAULT_CONFIG = {
     qmdPort: 8181,
     qmdHost: "localhost",
     qmdCollectionName: "lia-memory",
-    enableVectorSearch: false,
+    enableVectorSearch: true,
 };
 //# sourceMappingURL=types.js.map

@@ -35,7 +35,7 @@ export const DEFAULT_CONFIG: LiaConfig = {
   qmdPort: 8181,
   qmdHost: "localhost",
   qmdCollectionName: "lia-memory",
-  enableVectorSearch: false,
+  enableVectorSearch: true,
 };
 
 /**
