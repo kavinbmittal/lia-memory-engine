@@ -4,7 +4,7 @@ Lia Memory Engine gives OpenClaw agents the kind of memory that actually works i
 
 ## Two Parts
 ### 1. Compaction Upgrade: Structured Memory ###
-OpenClaw’s built-in compaction throws away alot once the context gets full so your agents sometimes run around like headless chickens. Lia's memory engine brings a meaningful upgrade that solves this problem in a thoughtful and simple way:
+OpenClaw’s built-in compaction throws away alot once the context gets full so your agents sometimes run around like headless chickens. Lia's Memory Engine brings a meaningful upgrade that solves this problem in a thoughtful and simple way:
 - Right before compaction (set to 80% of context window), this engine will compresses the older half of messages into a summary that explicitly preserves decisions, commitments, open questions, Q&A pairs, and preferences
 - This structured summarization is generated via Claude Haiku and is kept in context. You keep everything that matters
 - The engine introduces auto-flush, where every message written to disk immediately so you also have a full transcript to search against, so nothing is truly gone even after compaction
