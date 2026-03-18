@@ -82,13 +82,36 @@ In `~/.openclaw/openclaw.json`:
     "~/.openclaw/extensions/lia-memory-engine"
   ],
   "plugins": {
+    "slots": {
+      "contextEngine": "lia-memory-engine"
+    },
     "entries": {
       "lia-memory-engine": {
-        "enabled": true,
-        "config": {
-          "compactionThreshold": 0.80,
-          "compactionModel": "anthropic/claude-haiku-4-5-20251001",
-          "autoRetrieval": true
+        "enabled": true
+      }
+    }
+  }
+}
+```
+
+**The `plugins.slots.contextEngine` line is required.** Without it, the plugin installs and shows `enabled: true`, but OpenClaw silently falls back to its built-in safeguard compaction. The `memory_search` tool registers, but none of the engine lifecycle methods fire — no `assemble()`, no `ingest()`, no `compact()`, no auto-flush. There's no error or warning in older versions (v1.1+ logs a warning).
+
+On first session start, the plugin starts the QMD daemon automatically. Models stay warm across sessions — no loading penalty after the first one.
+
+### 6. Configure session reset (recommended)
+
+The plugin handles compaction (in-place summarization, no reset), but OpenClaw's session reset policy is separate. Without configuring it, sessions may reset unexpectedly and lose context that the plugin has been carefully preserving.
+
+Add to `openclaw.json`:
+
+```json
+{
+  "agents": {
+    "defaults": {
+      "session": {
+        "reset": {
+          "mode": "idle",
+          "idleMinutes": 10080
         }
       }
     }
@@ -96,7 +119,21 @@ In `~/.openclaw/openclaw.json`:
 }
 ```
 
-That's it. On first session start, the plugin starts the QMD daemon automatically. Models stay warm across sessions — no loading penalty after the first one.
+This sets sessions to reset only after 7 days of inactivity (10080 minutes). Since the plugin's compaction keeps context usable indefinitely, you don't need aggressive session resets.
+
+### Verify it's working
+
+After setup, confirm the plugin is actually active as the context engine:
+
+1. **Check gateway logs on startup.** Look for:
+   ```
+   [lia-memory-engine] Registered as context engine
+   ```
+   If you see `WARNING: Plugin loaded but not assigned as context engine` instead, the slot assignment is missing — go back to step 5.
+
+2. **Send a message, then check the transcript.** After your first message in a session, verify that `memory/daily/YYYY-MM-DD.md` exists in your workspace and contains conversation entries (format: `## HH:MM` with `**User:**` and `**Agent:**` sections). If the file doesn't exist, the engine's `ingest()` is not being called.
+
+3. **Check `/status` output.** Compaction events should show `lia-memory-engine` as the source. If you see "safeguard mode" or no compaction source, the plugin isn't slotted.
 
 ## What it does
 
@@ -118,18 +155,33 @@ If the daemon isn't available (QMD not installed, model not downloaded yet), the
 
 ## Configuration
 
+All options go under `plugins.entries.lia-memory-engine.config` in `openclaw.json`:
+
+```json
+"lia-memory-engine": {
+  "enabled": true,
+  "config": {
+    "compactionThreshold": 0.80,
+    "compactionModel": "anthropic/claude-haiku-4-5",
+    "autoRetrieval": true,
+    "autoRetrievalTimeoutMs": 500,
+    "transcriptRetentionDays": 180
+  }
+}
+```
+
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
 | `enabled` | boolean | `true` | Enable/disable the entire plugin |
-| `compactionThreshold` | number | `0.80` | Fraction of context window that triggers compaction (0.1–1.0) |
-| `compactionModel` | string | `anthropic/claude-haiku-4-5` | Model for compaction summarization |
-| `autoRetrieval` | boolean | `true` | Auto-search memory and inject context every turn |
-| `autoRetrievalTimeoutMs` | number | `500` | Timeout for auto-retrieval (ms) |
-| `transcriptRetentionDays` | number | `180` | Days to retain daily transcript files |
-| `qmdHost` | string | `localhost` | QMD daemon host |
-| `qmdPort` | number | `8181` | QMD daemon port |
-| `qmdCollectionName` | string | `lia-memory` | QMD collection name |
-| `enableVectorSearch` | boolean | `true` | Enable vector + LLM reranking (requires model download) |
+| `compactionThreshold` | number | `0.80` | Fraction of context window that triggers compaction (0.1–1.0). At this threshold, the engine splits messages at the midpoint and summarizes the older half |
+| `compactionModel` | string | `anthropic/claude-haiku-4-5` | Model used for compaction summarization. Must be a fast model — it runs synchronously during compaction |
+| `autoRetrieval` | boolean | `true` | Automatically search memory files and inject relevant context before every model turn. Uses the last user message as the search query |
+| `autoRetrievalTimeoutMs` | number | `500` | Maximum time in ms to wait for auto-retrieval results. Keeps the agent responsive — if QMD doesn't respond in time, the turn proceeds without memory context |
+| `transcriptRetentionDays` | number | `180` | Days to keep daily transcript files before cleanup. Set higher if you want longer memory recall |
+| `qmdHost` | string | `localhost` | QMD HTTP daemon hostname |
+| `qmdPort` | number | `8181` | QMD HTTP daemon port |
+| `qmdCollectionName` | string | `lia-memory` | QMD collection name. Change this if you run multiple agents with separate memory pools |
+| `enableVectorSearch` | boolean | `true` | Enable vector semantic search + LLM reranking. Requires a ~400MB GGUF model download on first run. When `false`, only BM25 keyword search is used |
 
 To disable vector search and use BM25 only (no model download required):
 

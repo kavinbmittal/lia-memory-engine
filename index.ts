@@ -177,6 +177,19 @@ function register(api: unknown): void {
     );
   }
 
+  // Warn if the plugin loaded but isn't slotted as the active context engine.
+  // Without the slot assignment, OpenClaw silently falls back to built-in compaction
+  // and none of the engine lifecycle methods (assemble, ingest, compact, auto-flush) fire.
+  const slotsConfig = pluginsConfig?.slots as Record<string, unknown> | undefined;
+  const contextEngineSlot = slotsConfig?.contextEngine as string | undefined;
+  if (contextEngineSlot !== "lia-memory-engine") {
+    logger.warn(
+      `[lia-memory-engine] WARNING: Plugin loaded but not assigned as context engine. ` +
+      `Add "plugins.slots.contextEngine": "lia-memory-engine" to openclaw.json. ` +
+      `Without this, only the memory_search tool is active — compaction, auto-flush, and auto-retrieval will not work.`
+    );
+  }
+
   // Register memory_search tool
   registerMemorySearchTool(typedApi, engine, logger);
 
