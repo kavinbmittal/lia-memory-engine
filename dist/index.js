@@ -106,24 +106,32 @@ function register(api) {
         warn: (...args) => log?.warn?.(...args),
         error: (...args) => log?.error?.(...args),
     };
-    // Build workspace resolver
-    const resolveWorkspaceDir = (sessionId) => {
-        // Try api.resolvePath first (resolves relative to agent workspace)
+    // Build workspace resolver — must resolve to the correct agent's workspace
+    // based on the session key (e.g., "agent:midas:main" → midas's workspace).
+    const resolveWorkspaceDir = (sessionId, sessionKey) => {
+        // Extract agent ID from session key (format: "agent:{agentId}:...")
+        const agentId = sessionKey ? extractAgentId(sessionKey) : undefined;
+        // Look up the agent's workspace from the config's agent list
+        const agentsConfig = typedApi.config?.agents;
+        const agentList = agentsConfig?.list;
+        if (agentId && agentList) {
+            const agent = agentList.find(a => a.id === agentId);
+            if (agent && typeof agent.workspace === "string") {
+                return agent.workspace;
+            }
+        }
+        // Fallback: try the default workspace from agent config
+        const defaultWorkspace = agentsConfig?.defaults;
+        if (typeof defaultWorkspace?.workspace === "string") {
+            return defaultWorkspace.workspace;
+        }
+        // Try api.resolvePath (resolves relative to the plugin's registration context)
         if (typeof typedApi.resolvePath === "function") {
             return typedApi.resolvePath(".");
         }
-        // Fallback: try to get workspace from session config
-        const agentConfig = typedApi.config?.agent
-            ?? typedApi.config;
-        if (typeof agentConfig?.workspaceDir === "string") {
-            return agentConfig.workspaceDir;
-        }
-        if (typeof agentConfig?.workspace === "string") {
-            return agentConfig.workspace;
-        }
         // No valid workspace directory found — refuse to fall back to cwd (path traversal risk)
-        throw new Error(`[lia-memory-engine] Cannot resolve workspace directory for session "${sessionId}". ` +
-            `Ensure api.resolvePath or agent config workspaceDir is available.`);
+        throw new Error(`[lia-memory-engine] Cannot resolve workspace directory for session "${sessionId}" ` +
+            `(key: ${sessionKey ?? "unknown"}). Ensure agent config has a workspace path.`);
     };
     // Create the engine
     const engine = new LiaContextEngine(config, {
@@ -199,6 +207,18 @@ function registerMemorySearchTool(api, engine, logger) {
         },
     }, { optional: true });
     logger.info("[lia-memory-engine] Registered memory_search tool");
+}
+/**
+ * Extract agent ID from a session key.
+ * Session keys follow the format "agent:{agentId}:{rest}",
+ * e.g., "agent:midas:main" → "midas", "agent:main:cron:..." → "main".
+ */
+function extractAgentId(sessionKey) {
+    const parts = sessionKey.split(":");
+    if (parts.length >= 2 && parts[0] === "agent") {
+        return parts[1];
+    }
+    return undefined;
 }
 /** Plugin default export — matches OpenClaw's expected plugin object shape. */
 const liaPlugin = {

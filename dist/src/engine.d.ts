@@ -51,6 +51,8 @@ export declare class LiaContextEngine {
      */
     bootstrap(params: {
         sessionId: string;
+        sessionKey?: string;
+        sessionFile?: string;
         messages?: AgentMessage[];
     }): Promise<{
         ok: boolean;
@@ -91,12 +93,21 @@ export declare class LiaContextEngine {
         compactedTokens: number;
     }>;
     /**
-     * After-turn hook: check if compaction is needed based on threshold.
+     * After-turn hook: ingest new messages and check if compaction is needed.
      * Called by OpenClaw after each model turn completes.
+     *
+     * IMPORTANT: When afterTurn() is defined, OpenClaw calls it INSTEAD of
+     * ingest()/ingestBatch(). So we must handle message ingestion and transcript
+     * writing here, not just compaction checks.
      */
     afterTurn(params: {
         sessionId: string;
+        sessionKey?: string;
+        messages?: AgentMessage[];
+        prePromptMessageCount?: number;
         contextWindowTokens?: number;
+        tokenBudget?: number;
+        runtimeContext?: Record<string, unknown>;
     }): Promise<{
         needsCompaction: boolean;
     }>;

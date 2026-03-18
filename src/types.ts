@@ -60,8 +60,10 @@ export interface LiaDependencies {
   /**
    * Resolve workspace directory for a given session.
    * Returns the absolute path to the agent's workspace directory.
+   * The sessionKey (e.g., "agent:midas:main") can be used to determine
+   * which agent's workspace to resolve.
    */
-  resolveWorkspaceDir: (sessionId: string) => string;
+  resolveWorkspaceDir: (sessionId: string, sessionKey?: string) => string;
 
   /**
    * Optional QMD client override — inject for testing or custom implementations.

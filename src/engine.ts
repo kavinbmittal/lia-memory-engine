@@ -79,15 +79,17 @@ export class LiaContextEngine {
    */
   async bootstrap(params: {
     sessionId: string;
+    sessionKey?: string;
+    sessionFile?: string;
     messages?: AgentMessage[];
   }): Promise<{ ok: boolean }> {
-    const { sessionId, messages } = params;
+    const { sessionId, sessionKey, messages } = params;
 
     let workspaceDir: string;
     try {
-      workspaceDir = this.deps.resolveWorkspaceDir(sessionId);
+      workspaceDir = this.deps.resolveWorkspaceDir(sessionId, sessionKey);
     } catch (err) {
-      this.deps.logger.error(`[lia-memory-engine] Failed to resolve workspace for session ${sessionId}:`, err);
+      this.deps.logger.error(`[lia-memory-engine] Failed to resolve workspace for session ${sessionId} (key: ${sessionKey}):`, err);
       return { ok: false };
     }
 
@@ -318,22 +320,62 @@ export class LiaContextEngine {
   }
 
   /**
-   * After-turn hook: check if compaction is needed based on threshold.
+   * After-turn hook: ingest new messages and check if compaction is needed.
    * Called by OpenClaw after each model turn completes.
+   *
+   * IMPORTANT: When afterTurn() is defined, OpenClaw calls it INSTEAD of
+   * ingest()/ingestBatch(). So we must handle message ingestion and transcript
+   * writing here, not just compaction checks.
    */
   async afterTurn(params: {
     sessionId: string;
+    sessionKey?: string;
+    messages?: AgentMessage[];
+    prePromptMessageCount?: number;
     contextWindowTokens?: number;
+    tokenBudget?: number;
+    runtimeContext?: Record<string, unknown>;
   }): Promise<{ needsCompaction: boolean }> {
     if (!this.config.enabled) {
       return { needsCompaction: false };
     }
 
-    const { sessionId, contextWindowTokens } = params;
+    const { sessionId, sessionKey, messages, prePromptMessageCount, contextWindowTokens, tokenBudget } = params;
     const session = this.getOrCreateSession(sessionId);
 
+    // Resolve workspace from runtime context if session was lazy-initialized
+    // (bootstrap may not have been called, or may have resolved the wrong workspace)
+    if (!session.initialized && params.runtimeContext) {
+      const rtWorkspace = params.runtimeContext.workspaceDir as string | undefined;
+      if (typeof rtWorkspace === "string" && rtWorkspace.length > 0) {
+        session.workspaceDir = rtWorkspace;
+      }
+    }
+
+    // Ingest new messages — OpenClaw skips ingest() when afterTurn() is defined
+    if (messages && typeof prePromptMessageCount === "number") {
+      const newMessages = messages.slice(prePromptMessageCount);
+      if (newMessages.length > 0) {
+        for (const msg of newMessages) {
+          session.messages.push(msg);
+        }
+
+        // Auto-flush: write new messages to daily transcript
+        try {
+          await writeTranscript(session.workspaceDir, newMessages);
+          // Re-index so new content is searchable within the same session
+          this.qmdClient?.embedBackground();
+        } catch (err) {
+          this.deps.logger.error(
+            `[lia-memory-engine] Failed to write transcript in afterTurn for session ${sessionId}:`, err
+          );
+        }
+      }
+    }
+
+    // Check compaction threshold
     const estimatedTokens = estimateMessageTokens(session.messages);
-    const contextWindow = contextWindowTokens ?? 1_000_000; // Default 1M
+    const contextWindow = tokenBudget ?? contextWindowTokens ?? 1_000_000; // Default 1M
     const threshold = Math.floor(contextWindow * this.config.compactionThreshold);
 
     const overThreshold = estimatedTokens >= threshold;
@@ -383,12 +425,12 @@ export class LiaContextEngine {
    * Get existing session state or create a new one.
    * Lazily initializes if bootstrap() wasn't called first.
    */
-  private getOrCreateSession(sessionId: string): SessionState {
+  private getOrCreateSession(sessionId: string, sessionKey?: string): SessionState {
     let session = this.sessions.get(sessionId);
     if (!session) {
       let workspaceDir: string;
       try {
-        workspaceDir = this.deps.resolveWorkspaceDir(sessionId);
+        workspaceDir = this.deps.resolveWorkspaceDir(sessionId, sessionKey);
       } catch {
         // Fallback to a reasonable default if resolution fails
         workspaceDir = `.`;
