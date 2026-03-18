@@ -40,13 +40,17 @@ The plugin connects to a local QMD HTTP daemon at `localhost:8181`. On bootstrap
 
 ### Linux / Railway
 
-QMD installs [node-llama-cpp](https://github.com/withcatai/node-llama-cpp) as a dependency, which compiles llama.cpp from C++ source at install time. On macOS, Xcode command line tools include everything needed and this is invisible. On a fresh Linux container (including Railway), you need to install the build tools first:
+QMD installs [node-llama-cpp](https://github.com/withcatai/node-llama-cpp) as a dependency, which compiles llama.cpp from C++ source at runtime. On macOS, Xcode command line tools include everything needed and this is invisible. On a fresh Linux container (including Railway), you need three things:
 
 ```bash
-apt-get update && apt-get install -y cmake build-essential
+apt-get update && apt-get install -y git cmake build-essential
 ```
 
-Add this to your Railway Dockerfile or `nixpacks.toml` before the `npm install` step. Without it, `npm install -g @tobilu/qmd` will fail during the native build.
+- **`git`** — `node-llama-cpp` uses `git clone` to pull the `llama.cpp` source. Without it, the build enters an infinite retry loop with no error message.
+- **`cmake`** — required to compile `llama.cpp` from source.
+- **`build-essential`** — C/C++ compiler toolchain.
+
+Add this to your Railway Dockerfile or `nixpacks.toml` before the `npm install` step.
 
 ## Setup
 
