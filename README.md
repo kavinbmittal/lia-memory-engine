@@ -16,7 +16,7 @@ OpenClaw’s built-in compaction throws away alot once the context gets full so 
 - LLM reranking running together on-device
 The impact of this in practice is quite significant: basic search finds the memory that matches your words, QMD finds the memory that matches your intent. A query like “auth decision” will surface the conversation where you chose Supabase Auth because of RLS — not just any file that mentions authentication.
 
-Combined together you have a powerful upgrade where OpenClaw never forgets anything. This is the engine powering [Lia](https:/getlia.ai), the world's first AI Chief of Staff.
+Combined together you have a powerful upgrade where OpenClaw never forgets anything. This is the engine powering [Lia](https://getlia.ai), the world's first AI Chief of Staff.
 
 ## Requirements
 
