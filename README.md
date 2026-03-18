@@ -86,7 +86,7 @@ qmd embed -c lia-memory
 
 If you’re starting fresh with no prior transcripts, skip this — the plugin will handle it on bootstrap.
 
-### 5. Add the Engine to OpenClaw config
+### 5. Add the Engine to OpenClaw Config
 
 In `~/.openclaw/openclaw.json`, add the minimum viable config:
 
