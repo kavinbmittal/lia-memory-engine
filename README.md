@@ -185,6 +185,15 @@ After setup, confirm the plugin is actually active as the context engine:
 
 3. **Check `/status` output.** Compaction events should show `lia-memory-engine` as the source. If you see “safeguard mode” or no compaction source, the plugin isn’t slotted.
 
+4. **Verify QMD search returns results.** After a few messages, ask your agent to use the `memory_search` tool (e.g. “search your memory for [something you just discussed]”). If it returns actual matches with snippets, retrieval is working end-to-end. If it returns “No results found” despite having transcripts on disk, QMD’s search pipeline is broken — most likely the `node-llama-cpp` build failed silently.
+
+5. **Check for the infinite clone loop (Linux/Docker).** If your logs show this repeating endlessly:
+   ```
+   [node-llama-cpp] Cloning ggml-org/llama.cpp (local bundle)    0%
+   [node-llama-cpp] Cloning ggml-org/llama.cpp (GitHub)          0%
+   ```
+   `cmake` is not installed. `node-llama-cpp` needs it to compile `llama.cpp` from source, and without it enters an infinite retry loop with no error message. See the [Linux / Railway](#linux--railway) section. This won’t happen on macOS (Xcode includes cmake), only on Linux containers.
+
 ## Architecture
 
 ```
