@@ -82,6 +82,8 @@ That's it. On first session start, the plugin starts the QMD daemon automaticall
 
 3. **Auto-retrieval** — on every turn, QMD runs a hybrid search (BM25 + vector + LLM reranking) using the last user message as the query. Relevant past context is injected silently before the model runs. 500ms timeout so it never blocks.
 
+   After each message is written to the transcript, the index is updated in the background. This means messages are searchable immediately within the same session — not just from the next session onward.
+
 4. **`memory_search` tool** — agents can explicitly search conversation history. Uses full hybrid search with HyDE reranking for maximum quality.
 
 ## How the daemon works
