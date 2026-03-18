@@ -1,40 +1,52 @@
 /**
- * BM25-ranked search over workspace memory/ files.
+ * QMD-backed search for the Lia Memory Engine.
  *
- * Ported from Lia's search.ts + bm25.ts. Scans all .md files in
- * memory/ (topic files) and memory/daily/ (transcripts), ranks by
- * BM25 relevance, returns top results with context snippets.
+ * Replaces the hand-rolled BM25 file scanner with QMD's hybrid search
+ * (BM25 + optional vector + HyDE reranking via the QMD HTTP daemon).
  *
- * Adapted for OpenClaw: uses workspaceDir instead of telegramId,
- * labels output "Agent" instead of "Lia."
+ * All search calls are best-effort: if the daemon is down or QMD is not
+ * installed, they fall back to the QMD CLI and ultimately return "".
+ * The engine must never block waiting for search.
  */
-import type { SearchResult, BM25Doc, RankedDocument } from "./types.js";
-/**
- * Rank documents against a query using Okapi BM25.
- * Returns documents with score > 0, sorted descending by relevance.
- */
-export declare function rankDocuments(documents: BM25Doc[], query: string, limit?: number): RankedDocument[];
-/**
- * Search all .md files in memory/ for relevant matches using BM25 ranking.
- * Returns top 5 files with up to 3 matches each (200-char snippets).
- *
- * @param workspaceDir - Absolute path to the agent's workspace directory
- * @param query - Search query (case-insensitive)
- * @param days - Optional limit to last N days (only affects daily/YYYY-MM-DD.md files)
- */
-export declare function searchMemory(workspaceDir: string, query: string, days?: number): Promise<SearchResult[]>;
+import type { QMDClient } from "./qmd-client.js";
 /**
  * Search memory for auto-retrieval context injection.
- * Returns formatted markdown string for systemPromptAddition.
- * Excludes today's transcript (already in context from the current session).
- * Enforced timeout so it never blocks the agent.
+ * Called on every `assemble()` before a model run — must be fast.
  *
- * @param workspaceDir - Absolute path to the agent's workspace directory
- * @param query - The latest user message to search for
- * @param timeoutMs - Maximum time to spend searching (default 500ms)
+ * When the daemon is running: uses BM25-only (or hybrid if enabled) with a
+ * tight timeout so it never delays the agent's response.
+ *
+ * When the daemon is not running: falls back to the QMD CLI (slower, but
+ * still bounded — CLI has its own 3s timeout).
+ *
+ * Returns empty string if no results or if search fails for any reason.
+ *
+ * @param client         - Initialized QMDClient
+ * @param query          - The last user message text to search for
+ * @param timeoutMs      - Maximum ms to wait for daemon search (default 500)
+ * @param daemonRunning  - Whether the QMD daemon is currently running
  */
-export declare function searchForContext(workspaceDir: string, query: string, timeoutMs?: number): Promise<string>;
+export declare function searchForContext(client: QMDClient, query: string, timeoutMs: number, daemonRunning: boolean): Promise<string>;
 /**
- * Format search results as readable markdown for the memory_search tool.
+ * Full memory search for explicit `memory_search` tool calls.
+ * Uses full hybrid mode (BM25 + vec + HyDE) when the daemon is running and
+ * vector search is enabled, giving the best result quality.
+ *
+ * Falls back to CLI when daemon is down.
+ * Returns empty string if no results or on any error.
+ *
+ * @param client         - Initialized QMDClient
+ * @param query          - Search query from the agent tool call
+ * @param daemonRunning  - Whether the QMD daemon is currently running
  */
-export declare function formatSearchResults(results: SearchResult[], query: string): string;
+export declare function searchMemory(client: QMDClient, query: string, daemonRunning: boolean): Promise<string>;
+/**
+ * Format the raw QMD result text for display in the tool response.
+ *
+ * QMD already returns formatted markdown from its search results, so this
+ * function wraps it in a consistent header and handles the empty case.
+ *
+ * @param text  - Raw text returned by searchMemory or searchForContext
+ * @param query - The original search query (used in headers and no-results message)
+ */
+export declare function formatSearchResults(text: string, query: string): string;

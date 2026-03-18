@@ -13,5 +13,9 @@ export const DEFAULT_CONFIG = {
     autoRetrieval: true,
     autoRetrievalTimeoutMs: 500,
     transcriptRetentionDays: 180,
+    qmdPort: 8181,
+    qmdHost: "localhost",
+    qmdCollectionName: "lia-memory",
+    enableVectorSearch: true,
 };
 //# sourceMappingURL=types.js.map

@@ -14,6 +14,14 @@ export interface LiaConfig {
   autoRetrieval: boolean;
   autoRetrievalTimeoutMs: number;
   transcriptRetentionDays: number;
+  /** Port for the QMD HTTP daemon (default 8181). */
+  qmdPort: number;
+  /** Host for the QMD HTTP daemon (default "localhost"). */
+  qmdHost: string;
+  /** QMD collection name for this agent's memory (default "lia-memory"). */
+  qmdCollectionName: string;
+  /** Enable vector semantic search — requires GGUF model download on first run (default false). */
+  enableVectorSearch: boolean;
 }
 
 /** Default configuration values — matches openclaw.plugin.json defaults. */
@@ -24,6 +32,10 @@ export const DEFAULT_CONFIG: LiaConfig = {
   autoRetrieval: true,
   autoRetrievalTimeoutMs: 500,
   transcriptRetentionDays: 180,
+  qmdPort: 8181,
+  qmdHost: "localhost",
+  qmdCollectionName: "lia-memory",
+  enableVectorSearch: true,
 };
 
 /**
@@ -50,6 +62,12 @@ export interface LiaDependencies {
    * Returns the absolute path to the agent's workspace directory.
    */
   resolveWorkspaceDir: (sessionId: string) => string;
+
+  /**
+   * Optional QMD client override — inject for testing or custom implementations.
+   * When provided, the engine uses this directly and skips daemon lifecycle.
+   */
+  qmdClient?: import("./qmd-client.js").QMDClient;
 }
 
 /**
@@ -71,26 +89,3 @@ export interface ContentBlock {
   [key: string]: unknown;
 }
 
-/** BM25 search result from memory files. */
-export interface SearchMatch {
-  line: number;
-  context: string;
-  timestamp?: string;
-}
-
-export interface SearchResult {
-  file: string;
-  matches: SearchMatch[];
-  matchCount: number;
-}
-
-/** BM25 document for ranking. */
-export interface BM25Doc {
-  id: string;
-  content: string;
-}
-
-export interface RankedDocument {
-  id: string;
-  score: number;
-}

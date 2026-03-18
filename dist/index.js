@@ -4,15 +4,18 @@
  * Replaces OpenClaw's built-in compaction with Lia's approach:
  * 1. Structured compaction via Haiku (preserves Q&A structure)
  * 2. Auto-flush every turn to daily transcript files
- * 3. Auto-retrieval via BM25 on every assemble() call
+ * 3. Auto-retrieval via QMD hybrid search on every assemble() call
  * 4. memory_search tool for explicit agent queries
+ *
+ * Search is powered by QMD (https://github.com/tobi/qmd) running as an HTTP
+ * daemon. If QMD is not installed, search returns empty strings gracefully.
  *
  * Usage:
  *   Install in OpenClaw extensions directory, then enable in agent config.
  *   The plugin registers itself as a context engine and a tool provider.
  */
 import { LiaContextEngine } from "./src/engine.js";
-import { searchMemory, formatSearchResults } from "./src/search.js";
+import { formatSearchResults } from "./src/search.js";
 import { DEFAULT_CONFIG } from "./src/types.js";
 const configSchema = {
     type: "object",
@@ -23,14 +26,22 @@ const configSchema = {
         autoRetrieval: { type: "boolean", default: true },
         autoRetrievalTimeoutMs: { type: "number", default: 500, minimum: 100, maximum: 5000 },
         transcriptRetentionDays: { type: "number", default: 180, minimum: 1 },
+        qmdPort: { type: "number", default: 8181 },
+        qmdHost: { type: "string", default: "localhost" },
+        qmdCollectionName: { type: "string", default: "lia-memory" },
+        enableVectorSearch: { type: "boolean", default: false },
     },
 };
 /**
  * Plugin registration function — called by OpenClaw when the plugin is loaded.
  */
 function register(api) {
+    const typedApi = api;
     // Parse config with defaults
-    const pluginConfig = api.config?.plugins?.entries?.["lia-memory-engine"]?.config ?? {};
+    const pluginsConfig = typedApi.config?.plugins;
+    const pluginsEntries = pluginsConfig?.entries;
+    const pluginEntry = pluginsEntries?.["lia-memory-engine"];
+    const pluginConfig = pluginEntry?.config ?? {};
     const config = {
         enabled: pluginConfig.enabled ?? DEFAULT_CONFIG.enabled,
         compactionThreshold: pluginConfig.compactionThreshold ?? DEFAULT_CONFIG.compactionThreshold,
@@ -38,9 +49,14 @@ function register(api) {
         autoRetrieval: pluginConfig.autoRetrieval ?? DEFAULT_CONFIG.autoRetrieval,
         autoRetrievalTimeoutMs: pluginConfig.autoRetrievalTimeoutMs ?? DEFAULT_CONFIG.autoRetrievalTimeoutMs,
         transcriptRetentionDays: pluginConfig.transcriptRetentionDays ?? DEFAULT_CONFIG.transcriptRetentionDays,
+        qmdPort: pluginConfig.qmdPort ?? DEFAULT_CONFIG.qmdPort,
+        qmdHost: pluginConfig.qmdHost ?? DEFAULT_CONFIG.qmdHost,
+        qmdCollectionName: pluginConfig.qmdCollectionName ?? DEFAULT_CONFIG.qmdCollectionName,
+        enableVectorSearch: pluginConfig.enableVectorSearch ?? DEFAULT_CONFIG.enableVectorSearch,
     };
+    const log = typedApi.log;
     if (!config.enabled) {
-        api.log?.info?.("[lia-memory-engine] Plugin disabled via config");
+        log?.info?.("[lia-memory-engine] Plugin disabled via config");
         return;
     }
     // Build the completeFn wrapper for LLM access.
@@ -48,14 +64,16 @@ function register(api) {
     // dynamically importing the pi-ai module (same pattern as Lossless Claw).
     const completeFn = async (model, systemPrompt, userContent) => {
         // Method 1: Direct API method (if available)
-        if (typeof api.completeSimple === "function") {
-            return api.completeSimple(model, systemPrompt, userContent);
+        if (typeof typedApi.completeSimple === "function") {
+            return typedApi.completeSimple(model, systemPrompt, userContent);
         }
         // Method 2: Dynamic import of pi-ai (OpenClaw's internal LLM router)
         try {
             const piAi = await import("@mariozechner/pi-ai");
-            const result = await piAi.completeSimple(model, systemPrompt, userContent);
-            return result;
+            const completeSimple = piAi.completeSimple;
+            if (typeof completeSimple === "function") {
+                return await completeSimple(model, systemPrompt, userContent);
+            }
         }
         catch {
             // ignored — will try next method
@@ -65,7 +83,7 @@ function register(api) {
             const anthropic = await import("@anthropic-ai/sdk");
             // Strip provider prefix if present (e.g., "anthropic/claude-haiku-4-5" → "claude-haiku-4-5-20251001")
             const modelId = model.includes("/") ? model.split("/").slice(1).join("/") : model;
-            const AnthropicClass = anthropic.default ?? anthropic;
+            const AnthropicClass = (anthropic.default ?? anthropic);
             const client = new AnthropicClass();
             const response = await client.messages.create({
                 model: modelId,
@@ -84,22 +102,23 @@ function register(api) {
     };
     // Build logger wrapper
     const logger = {
-        info: (...args) => api.log?.info?.(...args),
-        warn: (...args) => api.log?.warn?.(...args),
-        error: (...args) => api.log?.error?.(...args),
+        info: (...args) => log?.info?.(...args),
+        warn: (...args) => log?.warn?.(...args),
+        error: (...args) => log?.error?.(...args),
     };
     // Build workspace resolver
     const resolveWorkspaceDir = (sessionId) => {
         // Try api.resolvePath first (resolves relative to agent workspace)
-        if (typeof api.resolvePath === "function") {
-            return api.resolvePath(".");
+        if (typeof typedApi.resolvePath === "function") {
+            return typedApi.resolvePath(".");
         }
         // Fallback: try to get workspace from session config
-        const agentConfig = api.config?.agent ?? api.config;
-        if (agentConfig?.workspaceDir) {
+        const agentConfig = typedApi.config?.agent
+            ?? typedApi.config;
+        if (typeof agentConfig?.workspaceDir === "string") {
             return agentConfig.workspaceDir;
         }
-        if (agentConfig?.workspace) {
+        if (typeof agentConfig?.workspace === "string") {
             return agentConfig.workspace;
         }
         // No valid workspace directory found — refuse to fall back to cwd (path traversal risk)
@@ -113,8 +132,8 @@ function register(api) {
         resolveWorkspaceDir,
     });
     // Register as context engine — OpenClaw expects (id, factory) signature
-    if (typeof api.registerContextEngine === "function") {
-        api.registerContextEngine("lia-memory-engine", () => engine);
+    if (typeof typedApi.registerContextEngine === "function") {
+        typedApi.registerContextEngine("lia-memory-engine", () => engine);
         logger.info("[lia-memory-engine] Registered as context engine");
     }
     else {
@@ -123,15 +142,16 @@ function register(api) {
             "Only the memory_search tool will be registered.");
     }
     // Register memory_search tool
-    registerMemorySearchTool(api, resolveWorkspaceDir, logger);
+    registerMemorySearchTool(typedApi, engine, logger);
     logger.info(`[lia-memory-engine] Plugin loaded (compaction: ${config.compactionModel}, ` +
-        `threshold: ${config.compactionThreshold}, auto-retrieval: ${config.autoRetrieval})`);
+        `threshold: ${config.compactionThreshold}, auto-retrieval: ${config.autoRetrieval}, ` +
+        `qmd: ${config.qmdHost}:${config.qmdPort}, vector: ${config.enableVectorSearch})`);
 }
 /**
  * Register the memory_search tool with OpenClaw.
- * Allows agents to explicitly search their memory files.
+ * Allows agents to explicitly search their memory files using QMD.
  */
-function registerMemorySearchTool(api, resolveWorkspaceDir, logger) {
+function registerMemorySearchTool(api, engine, logger) {
     if (typeof api.registerTool !== "function") {
         logger.info("[lia-memory-engine] api.registerTool not available — skipping memory_search tool");
         return;
@@ -148,10 +168,6 @@ function registerMemorySearchTool(api, resolveWorkspaceDir, logger) {
                     type: "string",
                     description: "Keywords, names, topics, or phrases to search for.",
                 },
-                days: {
-                    type: "number",
-                    description: "Limit search to the last N days of transcripts. Omit to search all history.",
-                },
             },
             required: ["query"],
         },
@@ -163,23 +179,10 @@ function registerMemorySearchTool(api, resolveWorkspaceDir, logger) {
                     isError: true,
                 };
             }
-            const days = params.days ? Number(params.days) : undefined;
-            // Resolve workspace directory from context
-            let workspaceDir;
             try {
-                const sessionId = ctx?.sessionKey ?? ctx?.sessionId ?? "default";
-                workspaceDir = resolveWorkspaceDir(sessionId);
-            }
-            catch (resolveErr) {
-                const errMsg = resolveErr instanceof Error ? resolveErr.message : String(resolveErr);
-                return {
-                    content: [{ type: "text", text: `Memory search unavailable: ${errMsg}` }],
-                    isError: true,
-                };
-            }
-            try {
-                const results = await searchMemory(workspaceDir, query, days);
-                const formatted = formatSearchResults(results, query);
+                const sessionId = String(ctx?.sessionKey ?? ctx?.sessionId ?? "default");
+                const result = await engine.search({ sessionId, query });
+                const formatted = formatSearchResults(result, query);
                 return {
                     content: [{ type: "text", text: formatted }],
                     isError: false,
@@ -201,7 +204,7 @@ function registerMemorySearchTool(api, resolveWorkspaceDir, logger) {
 const liaPlugin = {
     id: "lia-memory-engine",
     name: "Lia Memory Engine",
-    description: "Lia-style context engine — structured compaction, auto-flush, BM25 auto-retrieval",
+    description: "Lia-style context engine — structured compaction, auto-flush, QMD hybrid search auto-retrieval",
     configSchema: {
         parse(value) {
             return value ?? {};
@@ -210,4 +213,6 @@ const liaPlugin = {
     register,
 };
 export default liaPlugin;
+// Re-export configSchema for documentation / tooling purposes
+export { configSchema };
 //# sourceMappingURL=index.js.map

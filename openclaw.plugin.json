@@ -40,6 +40,26 @@
         "description": "Number of days to retain daily transcript files",
         "default": 180,
         "minimum": 1
+      },
+      "qmdPort": {
+        "type": "number",
+        "description": "Port for the QMD HTTP daemon",
+        "default": 8181
+      },
+      "qmdHost": {
+        "type": "string",
+        "description": "Host for the QMD HTTP daemon",
+        "default": "localhost"
+      },
+      "qmdCollectionName": {
+        "type": "string",
+        "description": "QMD collection name for this agent's memory",
+        "default": "lia-memory"
+      },
+      "enableVectorSearch": {
+        "type": "boolean",
+        "description": "Enable vector semantic search (requires GGUF model download on first run)",
+        "default": true
       }
     },
     "required": []
@@ -66,6 +86,21 @@
     "transcriptRetentionDays": {
       "label": "Transcript Retention (days)",
       "placeholder": "180"
+    },
+    "qmdPort": {
+      "label": "QMD Daemon Port",
+      "placeholder": "8181"
+    },
+    "qmdHost": {
+      "label": "QMD Daemon Host",
+      "placeholder": "localhost"
+    },
+    "qmdCollectionName": {
+      "label": "QMD Collection Name",
+      "placeholder": "lia-memory"
+    },
+    "enableVectorSearch": {
+      "label": "Vector Search (requires model download)"
     }
   }
 }

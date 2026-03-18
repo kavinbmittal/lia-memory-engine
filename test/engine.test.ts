@@ -25,6 +25,16 @@ async function createTempWorkspace(): Promise<string> {
   return dir;
 }
 
+/** No-op QMD client — prevents daemon startup delay in tests. */
+const noopQmdClient = {
+  isRunning: async () => false,
+  startDaemon: async () => false,
+  ensureCollection: async () => {},
+  embedBackground: () => {},
+  search: async () => "",
+  searchCLI: async () => "",
+} as unknown as import("../src/qmd-client.js").QMDClient;
+
 /** Build test dependencies with a mock completeFn. */
 function buildDeps(
   workspaceDir: string,
@@ -38,6 +48,7 @@ function buildDeps(
       error: () => {},
     },
     resolveWorkspaceDir: (_sessionId) => workspaceDir,
+    qmdClient: noopQmdClient,
     ...overrides,
   };
 }
