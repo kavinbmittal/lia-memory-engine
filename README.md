@@ -24,6 +24,16 @@ Combined together you have a powerful upgrade where OpenClaw never forgets anyth
 - OpenClaw v2026.3.x+
 - [QMD](https://github.com/tobi/qmd) — the on-device search engine that powers memory retrieval
 
+### Linux / Railway
+
+QMD installs [node-llama-cpp](https://github.com/withcatai/node-llama-cpp) as a dependency, which compiles llama.cpp from C++ source at install time. On macOS, Xcode command line tools include everything needed and this is invisible. On a fresh Linux container (including Railway), you need to install the build tools first:
+
+```bash
+apt-get update && apt-get install -y cmake build-essential
+```
+
+Add this to your Railway Dockerfile or `nixpacks.toml` before the `npm install` step. Without it, `npm install -g @tobilu/qmd` will fail during the native build.
+
 ## Setup
 
 ### 1. Install QMD
