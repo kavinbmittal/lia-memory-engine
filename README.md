@@ -52,6 +52,20 @@ apt-get update && apt-get install -y git cmake build-essential
 
 Add this to your Railway Dockerfile or `nixpacks.toml` before the `npm install` step.
 
+### Bun is not supported
+
+QMD must run under **Node.js**, not Bun. `node-llama-cpp` ships pre-built native binaries for Node.js only. Under Bun, the native addon crashes silently on model load — no error, no warning, search just returns empty. Everything else (HTTP server, BM25 indexing, SQLite) works fine under Bun, so it looks healthy until you test an actual search query.
+
+If your stack uses Bun, run QMD in a separate process under Node.js.
+
+### GPU acceleration
+
+On servers without a GPU (including Railway), set `NODE_LLAMA_CPP_GPU=false` before starting QMD. Without this, `node-llama-cpp` tries to compile a Vulkan variant at runtime, which fails and falls back to CPU — but wastes 5+ minutes of build time on every container start.
+
+### Cold start
+
+The first search after a fresh deploy takes 10-20s on CPU while QMD loads embedding and reranking models into memory (~2.5GB total). Subsequent searches are fast (<1s). If you're wrapping QMD in a search endpoint, set your timeout to at least 30s to handle the cold start. Don't assume search is broken because the first call is slow.
+
 ## Setup
 
 ### 1. Install QMD
@@ -189,7 +203,7 @@ After setup, confirm the plugin is actually active as the context engine:
 
 3. **Check `/status` output.** Compaction events should show `lia-memory-engine` as the source. If you see “safeguard mode” or no compaction source, the plugin isn’t slotted.
 
-4. **Verify QMD search returns results.** After a few messages, ask your agent to use the `memory_search` tool (e.g. “search your memory for [something you just discussed]”). If it returns actual matches with snippets, retrieval is working end-to-end. If it returns “No results found” despite having transcripts on disk, QMD’s search pipeline is broken — most likely the `node-llama-cpp` build failed silently.
+4. **Verify QMD search returns results.** After a few messages, ask your agent to use the `memory_search` tool (e.g. “search your memory for [something you just discussed]”). If it returns actual matches with snippets, retrieval is working end-to-end. If it returns “No results found” despite having transcripts on disk, QMD’s search pipeline is broken — check for the issues below. **This is the most important step.** Without it, you won’t know if memory retrieval silently failed — auto-flush and registration can succeed while search returns nothing.
 
 5. **Check for the infinite clone loop (Linux/Docker).** If your logs show this repeating endlessly:
    ```
