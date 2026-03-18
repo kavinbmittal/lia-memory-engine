@@ -133,10 +133,13 @@ export class LiaContextEngine {
         const session = this.getOrCreateSession(sessionId);
         // Store the message in the session buffer
         session.messages.push(message);
-        // Auto-flush: write to daily transcript immediately
+        // Auto-flush: write to daily transcript immediately, then re-index so the
+        // new message is searchable within the same session (not just next session).
         if (this.config.enabled) {
             try {
                 await writeTranscript(session.workspaceDir, [message]);
+                // Fire-and-forget — qmd embed only re-indexes new/changed chunks, so this is fast.
+                this.qmdClient?.embedBackground();
             }
             catch (err) {
                 // Log but don't fail — transcript write is best-effort
