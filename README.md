@@ -1,8 +1,22 @@
 # Lia Memory Engine
 
-OpenClaw context engine plugin that ports Lia's memory system — structured compaction, auto-flush transcripts, and hybrid search (BM25 + vector + LLM reranking) via [QMD](https://github.com/tobi/qmd).
+Lia Memory Engine gives OpenClaw agents the kind of memory that actually works in practice — decisions made three sessions ago surface automatically, context doesn’t silently disappear when conversations get long, and nothing is ever lost.
 
-Every message is written to daily transcript files immediately, so nothing is ever lost. When context gets full, the older half is summarized by Claude Haiku using a structured prompt that preserves Q&A structure, decisions, commitments, and emotional context. On every turn, QMD searches past transcripts and silently injects the most relevant context before the model runs.
+## Two Parts
+### 1. Compaction Upgrade: Structured Memory ###
+OpenClaw’s built-in compaction throws away alot once the context gets full so your agents sometimes run around like headless chickens. Lia's memory engine brings a meaningful upgrade that solves this problem in a thoughtful and simple way:
+- Right before compaction (set to 80% of context window), this engine will compresses the older half of messages into a summary that explicitly preserves decisions, commitments, open questions, Q&A pairs, and preferences
+- This structured summarization is generated via Claude Haiku and is kept in context. You keep everything that matters
+- The engine introduces auto-flush, where every message written to disk immediately so you also have a full transcript to search against, so nothing is truly gone even after compaction
+
+### 2. QMD Memory Retrieval ###
+[QMD](https://github.com/tobi/qmd) is a frame work built by Tobi Lütke. QMD isn’t a search box, it’s a full retrieval pipeline:
+- BM25 keyword search
+- Vector semantic search and
+- LLM reranking running together on-device
+The impact of this in practice is quite significant: basic search finds the memory that matches your words, QMD finds the memory that matches your intent. A query like “auth decision” will surface the conversation where you chose Supabase Auth because of RLS — not just any file that mentions authentication.
+
+Combined together you have a powerful upgrade where OpenClaw never forgets anything.
 
 ## Requirements
 
