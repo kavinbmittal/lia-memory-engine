@@ -74,7 +74,7 @@ If you're starting fresh with no prior transcripts, skip this — the plugin wil
 
 ### 5. Add to OpenClaw config
 
-In `~/.openclaw/openclaw.json`:
+In `~/.openclaw/openclaw.json`, add the minimum viable config:
 
 ```json
 {
@@ -98,28 +98,7 @@ In `~/.openclaw/openclaw.json`:
 
 On first session start, the plugin starts the QMD daemon automatically. Models stay warm across sessions — no loading penalty after the first one.
 
-### 6. Configure session reset (recommended)
-
-The plugin handles compaction (in-place summarization, no reset), but OpenClaw's session reset policy is separate. Without configuring it, sessions may reset unexpectedly and lose context that the plugin has been carefully preserving.
-
-Add to `openclaw.json`:
-
-```json
-{
-  "agents": {
-    "defaults": {
-      "session": {
-        "reset": {
-          "mode": "idle",
-          "idleMinutes": 10080
-        }
-      }
-    }
-  }
-}
-```
-
-This sets sessions to reset only after 7 days of inactivity (10080 minutes). Since the plugin's compaction keeps context usable indefinitely, you don't need aggressive session resets.
+See [Configuration](#configuration) below for all available options and recommended session settings.
 
 ### Verify it's working
 
@@ -188,6 +167,27 @@ To disable vector search and use BM25 only (no model download required):
 ```json
 { "enableVectorSearch": false }
 ```
+
+### Recommended: session reset policy
+
+The plugin handles compaction (in-place summarization, no reset), but OpenClaw's session reset policy is separate. Without configuring it, sessions may reset unexpectedly and lose context that the plugin has been carefully preserving.
+
+```json
+{
+  "agents": {
+    "defaults": {
+      "session": {
+        "reset": {
+          "mode": "idle",
+          "idleMinutes": 10080
+        }
+      }
+    }
+  }
+}
+```
+
+This sets sessions to reset only after 7 days of inactivity (10080 minutes). Since the plugin's compaction keeps context usable indefinitely, you don't need aggressive session resets.
 
 ## Architecture
 
