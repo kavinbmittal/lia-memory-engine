@@ -76,6 +76,8 @@ export declare class LiaContextEngine {
     assemble(params: {
         sessionId: string;
         contextWindowTokens?: number;
+        /** OpenClaw's current message array (passed by OpenClaw, reloaded from JSONL). */
+        messages?: AgentMessage[];
     }): Promise<{
         messages: AgentMessage[];
         estimatedTokens: number;

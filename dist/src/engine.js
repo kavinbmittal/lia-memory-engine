@@ -157,6 +157,17 @@ export class LiaContextEngine {
     async assemble(params) {
         const { sessionId } = params;
         const session = this.getOrCreateSession(sessionId);
+        // After a restart, session.messages is empty but OpenClaw has already reloaded
+        // the conversation from the JSONL session file. Return OpenClaw's array as-is
+        // (same reference) so the `!==` check in OpenClaw skips replaceMessages().
+        // afterTurn() will seed session.messages on the next call naturally.
+        if (session.messages.length === 0 && params.messages && params.messages.length > 0) {
+            this.deps.logger.info(`[lia-memory-engine] Engine empty for session ${sessionId}, deferring to OpenClaw's ${params.messages.length} messages`);
+            return {
+                messages: params.messages,
+                estimatedTokens: estimateMessageTokens(params.messages),
+            };
+        }
         const messages = [...session.messages];
         const estimatedTokens = estimateMessageTokens(messages);
         // Auto-retrieval: search memory files for relevant context
