@@ -263,14 +263,18 @@ export class LiaContextEngine {
                 session.workspaceDir = rtWorkspace;
             }
         }
-        // Ingest new messages — OpenClaw skips ingest() when afterTurn() is defined
+        // Ingest new messages — OpenClaw skips ingest() when afterTurn() is defined.
+        // `messages` is the FULL session message array from OpenClaw (including pre-prompts).
+        // We slice at prePromptMessageCount to get conversation messages, then only
+        // persist messages we haven't seen yet (beyond what's already in session.messages).
         if (messages && typeof prePromptMessageCount === "number") {
-            const newMessages = messages.slice(prePromptMessageCount);
+            const conversationMessages = messages.slice(prePromptMessageCount);
+            const newMessages = conversationMessages.slice(session.messages.length);
             if (newMessages.length > 0) {
                 for (const msg of newMessages) {
                     session.messages.push(msg);
                 }
-                // Auto-flush: write new messages to daily transcript
+                // Auto-flush: write only genuinely new messages to daily transcript
                 try {
                     await writeTranscript(session.workspaceDir, newMessages);
                     // Re-index so new content is searchable within the same session
@@ -281,8 +285,10 @@ export class LiaContextEngine {
                 }
             }
         }
-        // Check compaction threshold
-        const estimatedTokens = estimateMessageTokens(session.messages);
+        // Check compaction threshold — estimate from the live conversation snapshot
+        // passed by OpenClaw (not our internal accumulator) to avoid any drift.
+        const liveMessages = messages?.slice(prePromptMessageCount ?? 0) ?? session.messages;
+        const estimatedTokens = estimateMessageTokens(liveMessages);
         const contextWindow = tokenBudget ?? contextWindowTokens ?? 1_000_000; // Default 1M
         const threshold = Math.floor(contextWindow * this.config.compactionThreshold);
         const overThreshold = estimatedTokens >= threshold;
