@@ -6,12 +6,12 @@ Lia Memory Engine gives OpenClaw agents the kind of memory that actually works i
 ### 1. Compaction Upgrade: Structured Memory ###
 OpenClaw’s built-in compaction throws away a lot once the context gets full so your agents sometimes run around like headless chickens. Lia’s Memory Engine brings a meaningful upgrade that solves this problem in a thoughtful and simple way:
 - When the context window is genuinely near capacity (default 80%), the engine compresses the older half of messages into a summary that explicitly preserves decisions, commitments, open questions, Q&A pairs, and preferences
-- Token usage is estimated from the live conversation snapshot passed by OpenClaw each turn — not from an internal accumulator — so the threshold check is always accurate and compaction only fires when the context is actually full
+- Token usage is estimated from the live conversation snapshot passed by OpenClaw each turn, so the threshold check is always accurate and compaction only fires when the context is actually full
 - This structured summarization is generated via Claude Haiku and is kept in context. You keep everything that matters
 - The engine introduces auto-flush, where every message is written to disk immediately so you also have a full transcript to search against, so nothing is truly gone even after compaction
 
 ### 2. QMD Memory Retrieval ###
-[QMD](https://github.com/tobi/qmd) is a frame work built by Tobi Lütke. QMD isn’t a search box, it’s a full retrieval pipeline:
+[QMD](https://github.com/tobi/qmd) is a framework built by Tobi Lütke. QMD isn’t a search box, it’s a full retrieval pipeline:
 - BM25 keyword search
 - Vector semantic search and
 - LLM reranking running together on-device
@@ -19,13 +19,15 @@ The impact of this in practice is quite significant: basic search finds the memo
 
 Combined together you have a powerful upgrade where OpenClaw never forgets anything. This is the engine powering [Lia](https://getlia.ai), the world’s first AI Chief of Staff.
 
-## What it does
+## How it works
 
-1. **Compaction via Haiku** — when context genuinely reaches the threshold (default 80%), splits messages at midpoint and summarizes the older half. Preserves Q&A pairs, decisions, commitments, open questions, preferences, and emotional context. Token usage is estimated from the live conversation snapshot each turn, so compaction only fires when the context is actually near capacity.
+**Key design principle: OpenClaw owns the conversation.** The engine never stores or replaces OpenClaw’s messages. OpenClaw loads conversations from its JSONL session files and passes them to the engine on every turn. The engine reads those messages but never maintains its own copy — it uses a lightweight counter to track what’s been flushed to transcript.
 
-2. **Auto-flush every turn** — writes every message to `memory/daily/YYYY-MM-DD.md` immediately. Nothing is ever lost.
+1. **Compaction via Haiku** — when context genuinely reaches the threshold (default 80%), the engine takes OpenClaw’s messages, splits at the midpoint, summarizes the older half, and returns the compacted result. OpenClaw replaces its messages with the compacted version. Preserves Q&A pairs, decisions, commitments, open questions, preferences, and emotional context.
 
-3. **Auto-retrieval** — on every turn, QMD runs a hybrid search (BM25 + vector + LLM reranking) using the last user message as the query. Relevant past context is injected silently before the model runs. 500ms timeout so it never blocks.
+2. **Auto-flush every turn** — after each turn, the engine identifies new messages (using a counter, not by diffing arrays) and writes them to `memory/daily/YYYY-MM-DD.md`. Nothing is ever lost.
+
+3. **Auto-retrieval** — before every model run, QMD runs a hybrid search (BM25 + vector + LLM reranking) using the last user message as the query. Relevant past context is injected silently into the system prompt. 500ms timeout so it never blocks.
 
    After each message is written to the transcript, the index is updated in the background. This means messages are searchable immediately within the same session — not just from the next session onward.
 
@@ -200,7 +202,7 @@ After setup, confirm the plugin is actually active as the context engine:
    ```
    If you see `WARNING: Plugin loaded but not assigned as context engine` instead, the slot assignment is missing — go back to [step 5](#5-add-to-openclaw-config).
 
-2. **Send a message, then check the transcript.** After your first message in a session, verify that `memory/daily/YYYY-MM-DD.md` exists in your workspace and contains conversation entries (format: `## HH:MM` with `**User:**` and `**Agent:**` sections). If the file doesn’t exist, the engine’s `ingest()` is not being called.
+2. **Send a message, then check the transcript.** After your first message in a session, verify that `memory/daily/YYYY-MM-DD.md` exists in your workspace and contains conversation entries (format: `## HH:MM` with `**User:**` and `**Agent:**` sections). If the file doesn’t exist, the engine’s `afterTurn()` is not being called.
 
 3. **Check `/status` output.** Compaction events should show `lia-memory-engine` as the source. If you see “safeguard mode” or no compaction source, the plugin isn’t slotted.
 
@@ -215,10 +217,21 @@ After setup, confirm the plugin is actually active as the context engine:
 
 ## Architecture
 
+The engine implements OpenClaw's `ContextEngine` interface with `ownsCompaction: true`. It never stores messages — OpenClaw's JSONL session files are the source of truth.
+
+| Hook | When | What it does |
+|------|------|-------------|
+| `bootstrap()` | Session start | Creates memory dirs, starts QMD daemon |
+| `assemble()` | Before each model run | Passes through OpenClaw's messages, adds QMD auto-retrieval context to system prompt |
+| `afterTurn()` | After each turn | Flushes new messages to transcript (counter-based), checks compaction threshold |
+| `compact()` | When threshold hit | Takes OpenClaw's messages, summarizes older half via Haiku, returns compacted result |
+| `search()` | `memory_search` tool | Full hybrid QMD search |
+| `dispose()` | Shutdown | Clears session trackers (no message data to lose) |
+
 ```
 index.ts              Plugin entry point — register(), configSchema, tool registration
 src/
-  engine.ts           LiaContextEngine — implements ContextEngine interface
+  engine.ts           LiaContextEngine — implements ContextEngine interface (stateless, no message storage)
   compact.ts          Compaction logic — midpoint split, Haiku summarization
   auto-flush.ts       Transcript formatting and daily file writes
   search.ts           Search functions — auto-retrieval and memory_search
