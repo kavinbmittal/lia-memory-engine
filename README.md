@@ -4,10 +4,11 @@ Lia Memory Engine gives OpenClaw agents the kind of memory that actually works i
 
 ## Two Parts
 ### 1. Compaction Upgrade: Structured Memory ###
-OpenClaw’s built-in compaction throws away alot once the context gets full so your agents sometimes run around like headless chickens. Lia’s Memory Engine brings a meaningful upgrade that solves this problem in a thoughtful and simple way:
-- Right before compaction (set to 80% of context window), this engine will compresses the older half of messages into a summary that explicitly preserves decisions, commitments, open questions, Q&A pairs, and preferences
+OpenClaw’s built-in compaction throws away a lot once the context gets full so your agents sometimes run around like headless chickens. Lia’s Memory Engine brings a meaningful upgrade that solves this problem in a thoughtful and simple way:
+- When the context window is genuinely near capacity (default 80%), the engine compresses the older half of messages into a summary that explicitly preserves decisions, commitments, open questions, Q&A pairs, and preferences
+- Token usage is estimated from the live conversation snapshot passed by OpenClaw each turn — not from an internal accumulator — so the threshold check is always accurate and compaction only fires when the context is actually full
 - This structured summarization is generated via Claude Haiku and is kept in context. You keep everything that matters
-- The engine introduces auto-flush, where every message written to disk immediately so you also have a full transcript to search against, so nothing is truly gone even after compaction
+- The engine introduces auto-flush, where every message is written to disk immediately so you also have a full transcript to search against, so nothing is truly gone even after compaction
 
 ### 2. QMD Memory Retrieval ###
 [QMD](https://github.com/tobi/qmd) is a frame work built by Tobi Lütke. QMD isn’t a search box, it’s a full retrieval pipeline:
@@ -20,7 +21,7 @@ Combined together you have a powerful upgrade where OpenClaw never forgets anyth
 
 ## What it does
 
-1. **Compaction via Haiku** — when context reaches the threshold (default 80%), splits messages at midpoint and summarizes the older half. Preserves Q&A pairs, decisions, commitments, open questions, preferences, and emotional context.
+1. **Compaction via Haiku** — when context genuinely reaches the threshold (default 80%), splits messages at midpoint and summarizes the older half. Preserves Q&A pairs, decisions, commitments, open questions, preferences, and emotional context. Token usage is estimated from the live conversation snapshot each turn, so compaction only fires when the context is actually near capacity.
 
 2. **Auto-flush every turn** — writes every message to `memory/daily/YYYY-MM-DD.md` immediately. Nothing is ever lost.
 
@@ -152,7 +153,7 @@ All options go under `plugins.entries.lia-memory-engine.config` in `openclaw.jso
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
 | `enabled` | boolean | `true` | Enable/disable the entire plugin |
-| `compactionThreshold` | number | `0.80` | Fraction of context window that triggers compaction (0.1–1.0). At this threshold, the engine splits messages at the midpoint and summarizes the older half |
+| `compactionThreshold` | number | `0.80` | Fraction of context window that triggers compaction (0.1–1.0). Measured against the live conversation snapshot each turn. At this threshold, the engine splits messages at the midpoint and summarizes the older half |
 | `compactionModel` | string | `anthropic/claude-haiku-4-5` | Model used for compaction summarization. Must be a fast model — it runs synchronously during compaction |
 | `autoRetrieval` | boolean | `true` | Automatically search memory files and inject relevant context before every model turn. Uses the last user message as the search query |
 | `autoRetrievalTimeoutMs` | number | `500` | Maximum time in ms to wait for auto-retrieval results. Keeps the agent responsive — if QMD doesn’t respond in time, the turn proceeds without memory context |
