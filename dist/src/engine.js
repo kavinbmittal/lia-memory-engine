@@ -1,10 +1,11 @@
 /**
- * LiaContextEngine — the core context engine implementation.
+ * LiaContextEngine v2 — OpenClaw owns the conversation.
  *
- * Implements OpenClaw's ContextEngine interface with:
- * - Structured compaction via Haiku (replaces OpenClaw's built-in compaction)
- * - Auto-flush every turn to daily transcript files
- * - Auto-retrieval via QMD hybrid search on every assemble() call
+ * The engine never stores, replaces, or competes with OpenClaw's messages.
+ * It only:
+ * 1. Reads OpenClaw's messages (via params) to decide what to flush and whether to compact
+ * 2. Adds memory context to the system prompt (auto-retrieval)
+ * 3. Returns a compacted message array when asked (compact only — not every turn)
  *
  * This engine owns compaction (ownsCompaction: true), meaning OpenClaw
  * will not run its own compaction when this engine is active.
@@ -24,18 +25,20 @@ import { QMDClient } from "./qmd-client.js";
  *
  * Lifecycle:
  * 1. bootstrap() — called when a session starts, initializes state + QMD
- * 2. ingest() — called for each new message, writes to transcript
- * 3. assemble() — called before each model run, returns messages + auto-retrieval
- * 4. afterTurn() — called after each turn, checks if compaction needed
- * 5. compact() — called when compaction is triggered
- * 6. dispose() — called on shutdown
+ * 2. assemble() — called before each model run, passes through OpenClaw's messages + auto-retrieval
+ * 3. afterTurn() — called after each turn, flushes new messages to transcript, checks compaction
+ * 4. compact() — called when compaction is triggered, summarizes older messages
+ * 5. dispose() — called on shutdown, clears session trackers
+ *
+ * Note: ingest() still exists for backwards compatibility but is a no-op when
+ * afterTurn() is defined (OpenClaw skips ingest in that case).
  */
 export class LiaContextEngine {
     /** Engine metadata — tells OpenClaw we own compaction. */
     info = {
         id: "lia-memory-engine",
         name: "Lia Memory Engine",
-        version: "1.0.0",
+        version: "2.0.0",
         ownsCompaction: true,
     };
     config;
@@ -57,7 +60,7 @@ export class LiaContextEngine {
      * the engine from functioning (search will return "" gracefully).
      */
     async bootstrap(params) {
-        const { sessionId, sessionKey, messages } = params;
+        const { sessionId, sessionKey } = params;
         let workspaceDir;
         try {
             workspaceDir = this.deps.resolveWorkspaceDir(sessionId, sessionKey);
@@ -76,12 +79,10 @@ export class LiaContextEngine {
         }
         catch (err) {
             this.deps.logger.warn(`[lia-memory-engine] Failed to create memory directories:`, err);
-            // Non-fatal — directories may already exist or will be created on first write
             memoryDir = join(workspaceDir, "memory");
         }
         // Lazily initialize QMD client (shared across all sessions on this engine instance)
         if (this.qmdClient === null) {
-            // Use injected client (e.g. in tests) or create a real one
             if (this.deps.qmdClient !== undefined) {
                 this.qmdClient = this.deps.qmdClient;
             }
@@ -97,52 +98,44 @@ export class LiaContextEngine {
                     });
                 }
                 catch (err) {
-                    // Only throws if memoryDir is not absolute — log and continue without QMD
                     this.deps.logger.warn("[lia-memory-engine] Failed to initialize QMD client:", err);
                 }
             }
         }
         if (this.qmdClient !== null) {
-            // Register the collection (non-fatal if already registered or qmd not installed)
             await this.qmdClient.ensureCollection();
-            // Start the daemon and record whether it came up successfully.
-            // Skipped for injected clients (tests/custom) — they control their own state.
             if (this.deps.qmdClient === undefined) {
                 this.daemonRunning = await this.qmdClient.startDaemon();
             }
-            // Kick off background embedding — fire and forget
             this.qmdClient.embedBackground();
         }
         this.sessions.set(sessionId, {
-            messages: messages ? [...messages] : [],
             workspaceDir,
             initialized: true,
             compacting: false,
             pendingCompaction: false,
-            messageCountAtCompactStart: 0,
+            lastFlushedCount: 0,
         });
-        this.deps.logger.info(`[lia-memory-engine] Session ${sessionId} bootstrapped (${messages?.length ?? 0} initial messages)`);
+        this.deps.logger.info(`[lia-memory-engine] Session ${sessionId} bootstrapped`);
         return { ok: true };
     }
     /**
      * Ingest a new message into the session.
-     * Writes to the daily transcript (auto-flush) and stores in memory.
+     * Writes to the daily transcript (auto-flush).
+     *
+     * Note: When afterTurn() is defined, OpenClaw calls afterTurn() INSTEAD of
+     * ingest(). This method exists for backwards compatibility and edge cases.
      */
     async ingest(params) {
         const { sessionId, message } = params;
         const session = this.getOrCreateSession(sessionId);
-        // Store the message in the session buffer
-        session.messages.push(message);
-        // Auto-flush: write to daily transcript immediately, then re-index so the
-        // new message is searchable within the same session (not just next session).
+        // Auto-flush: write to daily transcript immediately
         if (this.config.enabled) {
             try {
                 await writeTranscript(session.workspaceDir, [message]);
-                // Fire-and-forget — qmd embed only re-indexes new/changed chunks, so this is fast.
                 this.qmdClient?.embedBackground();
             }
             catch (err) {
-                // Log but don't fail — transcript write is best-effort
                 this.deps.logger.error(`[lia-memory-engine] Failed to write transcript for session ${sessionId}:`, err);
             }
         }
@@ -150,25 +143,16 @@ export class LiaContextEngine {
     }
     /**
      * Assemble messages for the next model run.
-     * Returns all session messages + auto-retrieval context as systemPromptAddition.
-     *
-     * Auto-retrieval uses QMD search, guarded by a timeout so it never blocks the agent.
+     * Passes through OpenClaw's messages (never replaces them) and adds
+     * auto-retrieval context as systemPromptAddition.
      */
     async assemble(params) {
         const { sessionId } = params;
-        const session = this.getOrCreateSession(sessionId);
-        // After a restart, session.messages is empty but OpenClaw has already reloaded
-        // the conversation from the JSONL session file. Return OpenClaw's array as-is
-        // (same reference) so the `!==` check in OpenClaw skips replaceMessages().
-        // afterTurn() will seed session.messages on the next call naturally.
-        if (session.messages.length === 0 && params.messages && params.messages.length > 0) {
-            this.deps.logger.info(`[lia-memory-engine] Engine empty for session ${sessionId}, deferring to OpenClaw's ${params.messages.length} messages`);
-            return {
-                messages: params.messages,
-                estimatedTokens: estimateMessageTokens(params.messages),
-            };
-        }
-        const messages = [...session.messages];
+        this.getOrCreateSession(sessionId);
+        // Use OpenClaw's messages as the source of truth. If OpenClaw passes them,
+        // return the same reference so the !== check in OpenClaw skips replaceMessages().
+        // If not passed (shouldn't happen), return empty.
+        const messages = params.messages ?? [];
         const estimatedTokens = estimateMessageTokens(messages);
         // Auto-retrieval: search memory files for relevant context
         let systemPromptAddition;
@@ -182,7 +166,6 @@ export class LiaContextEngine {
                     }
                 }
                 catch (err) {
-                    // Auto-retrieval failure is non-fatal
                     this.deps.logger.warn(`[lia-memory-engine] Auto-retrieval failed for session ${sessionId}:`, err);
                 }
             }
@@ -195,57 +178,51 @@ export class LiaContextEngine {
     }
     /**
      * Compact the session's messages when context is getting full.
-     * Summarizes older messages with a fast model, keeps recent ones verbatim.
+     * Operates on OpenClaw's messages (passed as params), summarizes older half
+     * with a fast model, and returns the compacted result. Resets the flush counter
+     * since the message array changed shape.
      */
     async compact(params) {
         const { sessionId } = params;
         const session = this.getOrCreateSession(sessionId);
+        // Use OpenClaw's messages if provided, otherwise we have nothing to compact
+        const inputMessages = params.messages ?? [];
         if (!this.config.enabled) {
             return {
-                messages: [...session.messages],
-                compactedTokens: estimateMessageTokens(session.messages),
+                messages: [...inputMessages],
+                compactedTokens: estimateMessageTokens(inputMessages),
             };
         }
         // Prevent double-compaction if already in progress
         if (session.compacting) {
             this.deps.logger.warn(`[lia-memory-engine] Compaction already in progress for session ${sessionId} — skipping`);
             return {
-                messages: [...session.messages],
-                compactedTokens: estimateMessageTokens(session.messages),
+                messages: [...inputMessages],
+                compactedTokens: estimateMessageTokens(inputMessages),
             };
         }
         session.compacting = true;
         session.pendingCompaction = false;
-        // Snapshot message count so we can detect concurrent ingests
-        const messageCountAtStart = session.messages.length;
-        session.messageCountAtCompactStart = messageCountAtStart;
-        this.deps.logger.info(`[lia-memory-engine] Compacting session ${sessionId} (${session.messages.length} messages)`);
+        this.deps.logger.info(`[lia-memory-engine] Compacting session ${sessionId} (${inputMessages.length} messages)`);
         try {
-            // Compact only the messages that existed when we started
-            const messagesToCompact = session.messages.slice(0, messageCountAtStart);
-            const { compactedMessages, tokensBefore, tokensAfter } = await compactMessages(messagesToCompact, this.deps.completeFn, this.config.compactionModel);
-            // Append any messages that were ingested during compaction
-            const concurrentMessages = session.messages.slice(messageCountAtStart);
-            const finalMessages = [...compactedMessages, ...concurrentMessages];
-            // Update session with compacted messages + any concurrent ingests
-            session.messages = finalMessages;
-            if (concurrentMessages.length > 0) {
-                this.deps.logger.info(`[lia-memory-engine] ${concurrentMessages.length} messages ingested during compaction — appended to result`);
-            }
+            const { compactedMessages, tokensBefore, tokensAfter } = await compactMessages(inputMessages, this.deps.completeFn, this.config.compactionModel);
+            // Reset flush counter — the message array changed shape, so the old
+            // position is meaningless. afterTurn() will re-flush the compacted
+            // messages on the next turn (harmless append to transcript).
+            session.lastFlushedCount = 0;
             this.deps.logger.info(`[lia-memory-engine] Compaction complete: ${tokensBefore} → ${tokensAfter} tokens ` +
                 `(${Math.round((1 - tokensAfter / tokensBefore) * 100)}% reduction)`);
-            const finalTokens = estimateMessageTokens(finalMessages);
+            const finalTokens = estimateMessageTokens(compactedMessages);
             return {
-                messages: [...finalMessages],
+                messages: [...compactedMessages],
                 compactedTokens: finalTokens,
             };
         }
         catch (err) {
             this.deps.logger.error(`[lia-memory-engine] Compaction failed for session ${sessionId}:`, err);
-            // Return current messages unchanged on failure
             return {
-                messages: [...session.messages],
-                compactedTokens: estimateMessageTokens(session.messages),
+                messages: [...inputMessages],
+                compactedTokens: estimateMessageTokens(inputMessages),
             };
         }
         finally {
@@ -253,42 +230,34 @@ export class LiaContextEngine {
         }
     }
     /**
-     * After-turn hook: ingest new messages and check if compaction is needed.
+     * After-turn hook: flush new messages to transcript and check compaction threshold.
      * Called by OpenClaw after each model turn completes.
      *
-     * IMPORTANT: When afterTurn() is defined, OpenClaw calls it INSTEAD of
-     * ingest()/ingestBatch(). So we must handle message ingestion and transcript
-     * writing here, not just compaction checks.
+     * Uses a counter (lastFlushedCount) to identify new messages — no shadow copy needed.
      */
     async afterTurn(params) {
         if (!this.config.enabled) {
             return { needsCompaction: false };
         }
         const { sessionId, sessionKey, messages, prePromptMessageCount, contextWindowTokens, tokenBudget } = params;
-        const session = this.getOrCreateSession(sessionId);
+        const session = this.getOrCreateSession(sessionId, sessionKey);
         // Resolve workspace from runtime context if session was lazy-initialized
-        // (bootstrap may not have been called, or may have resolved the wrong workspace)
         if (!session.initialized && params.runtimeContext) {
             const rtWorkspace = params.runtimeContext.workspaceDir;
             if (typeof rtWorkspace === "string" && rtWorkspace.length > 0) {
                 session.workspaceDir = rtWorkspace;
             }
         }
-        // Ingest new messages — OpenClaw skips ingest() when afterTurn() is defined.
-        // `messages` is the FULL session message array from OpenClaw (including pre-prompts).
-        // We slice at prePromptMessageCount to get conversation messages, then only
-        // persist messages we haven't seen yet (beyond what's already in session.messages).
+        // Auto-flush: write only new messages to daily transcript.
+        // Uses lastFlushedCount as the bookmark — no message array needed.
         if (messages && typeof prePromptMessageCount === "number") {
             const conversationMessages = messages.slice(prePromptMessageCount);
-            const newMessages = conversationMessages.slice(session.messages.length);
+            const newMessages = conversationMessages.slice(session.lastFlushedCount);
             if (newMessages.length > 0) {
-                for (const msg of newMessages) {
-                    session.messages.push(msg);
-                }
-                // Auto-flush: write only genuinely new messages to daily transcript
+                // Update counter BEFORE writing so we don't re-flush on failure retry
+                session.lastFlushedCount = conversationMessages.length;
                 try {
                     await writeTranscript(session.workspaceDir, newMessages);
-                    // Re-index so new content is searchable within the same session
                     this.qmdClient?.embedBackground();
                 }
                 catch (err) {
@@ -296,14 +265,12 @@ export class LiaContextEngine {
                 }
             }
         }
-        // Check compaction threshold — estimate from the live conversation snapshot
-        // passed by OpenClaw (not our internal accumulator) to avoid any drift.
-        const liveMessages = messages?.slice(prePromptMessageCount ?? 0) ?? session.messages;
+        // Check compaction threshold using OpenClaw's live message snapshot
+        const liveMessages = messages?.slice(prePromptMessageCount ?? 0) ?? [];
         const estimatedTokens = estimateMessageTokens(liveMessages);
-        const contextWindow = tokenBudget ?? contextWindowTokens ?? 1_000_000; // Default 1M
+        const contextWindow = tokenBudget ?? contextWindowTokens ?? 1_000_000;
         const threshold = Math.floor(contextWindow * this.config.compactionThreshold);
         const overThreshold = estimatedTokens >= threshold;
-        // Only signal compaction if not already pending or in progress
         const needsCompaction = overThreshold && !session.pendingCompaction && !session.compacting;
         if (needsCompaction) {
             session.pendingCompaction = true;
@@ -315,7 +282,6 @@ export class LiaContextEngine {
     /**
      * Explicit memory search — called by the memory_search tool.
      * Uses full hybrid search (BM25 + vec + HyDE) for best quality.
-     * Returns empty string if QMD client is not initialized or search fails.
      */
     async search(params) {
         if (this.qmdClient === null) {
@@ -325,8 +291,7 @@ export class LiaContextEngine {
     }
     /**
      * Cleanup when the engine is being shut down.
-     * The QMD daemon runs independently and is not stopped here
-     * (it may be shared across plugin reloads).
+     * Clears lightweight session trackers only — no message data to lose.
      */
     async dispose() {
         this.deps.logger.info(`[lia-memory-engine] Disposing (${this.sessions.size} active sessions)`);
@@ -347,16 +312,14 @@ export class LiaContextEngine {
                 workspaceDir = this.deps.resolveWorkspaceDir(sessionId, sessionKey);
             }
             catch {
-                // Fallback to a reasonable default if resolution fails
                 workspaceDir = `.`;
             }
             session = {
-                messages: [],
                 workspaceDir,
                 initialized: false,
                 compacting: false,
                 pendingCompaction: false,
-                messageCountAtCompactStart: 0,
+                lastFlushedCount: 0,
             };
             this.sessions.set(sessionId, session);
             this.deps.logger.warn(`[lia-memory-engine] Session ${sessionId} accessed before bootstrap — lazy-initialized`);
@@ -374,7 +337,6 @@ export class LiaContextEngine {
                 if (typeof content === "string")
                     return content;
                 if (Array.isArray(content)) {
-                    // Find first text block
                     for (const block of content) {
                         if (typeof block === "string")
                             return block;
@@ -384,8 +346,6 @@ export class LiaContextEngine {
                         }
                     }
                 }
-                // No extractable text in this user message (e.g. tool-result-only turn)
-                // — keep iterating backward to find a previous user message with text
                 continue;
             }
         }

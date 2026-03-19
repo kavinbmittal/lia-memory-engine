@@ -1,10 +1,11 @@
 /**
- * LiaContextEngine — the core context engine implementation.
+ * LiaContextEngine v2 — OpenClaw owns the conversation.
  *
- * Implements OpenClaw's ContextEngine interface with:
- * - Structured compaction via Haiku (replaces OpenClaw's built-in compaction)
- * - Auto-flush every turn to daily transcript files
- * - Auto-retrieval via QMD hybrid search on every assemble() call
+ * The engine never stores, replaces, or competes with OpenClaw's messages.
+ * It only:
+ * 1. Reads OpenClaw's messages (via params) to decide what to flush and whether to compact
+ * 2. Adds memory context to the system prompt (auto-retrieval)
+ * 3. Returns a compacted message array when asked (compact only — not every turn)
  *
  * This engine owns compaction (ownsCompaction: true), meaning OpenClaw
  * will not run its own compaction when this engine is active.
@@ -20,11 +21,13 @@ import type { AgentMessage, LiaConfig, LiaDependencies } from "./types.js";
  *
  * Lifecycle:
  * 1. bootstrap() — called when a session starts, initializes state + QMD
- * 2. ingest() — called for each new message, writes to transcript
- * 3. assemble() — called before each model run, returns messages + auto-retrieval
- * 4. afterTurn() — called after each turn, checks if compaction needed
- * 5. compact() — called when compaction is triggered
- * 6. dispose() — called on shutdown
+ * 2. assemble() — called before each model run, passes through OpenClaw's messages + auto-retrieval
+ * 3. afterTurn() — called after each turn, flushes new messages to transcript, checks compaction
+ * 4. compact() — called when compaction is triggered, summarizes older messages
+ * 5. dispose() — called on shutdown, clears session trackers
+ *
+ * Note: ingest() still exists for backwards compatibility but is a no-op when
+ * afterTurn() is defined (OpenClaw skips ingest in that case).
  */
 export declare class LiaContextEngine {
     /** Engine metadata — tells OpenClaw we own compaction. */
@@ -59,7 +62,10 @@ export declare class LiaContextEngine {
     }>;
     /**
      * Ingest a new message into the session.
-     * Writes to the daily transcript (auto-flush) and stores in memory.
+     * Writes to the daily transcript (auto-flush).
+     *
+     * Note: When afterTurn() is defined, OpenClaw calls afterTurn() INSTEAD of
+     * ingest(). This method exists for backwards compatibility and edge cases.
      */
     ingest(params: {
         sessionId: string;
@@ -69,14 +75,13 @@ export declare class LiaContextEngine {
     }>;
     /**
      * Assemble messages for the next model run.
-     * Returns all session messages + auto-retrieval context as systemPromptAddition.
-     *
-     * Auto-retrieval uses QMD search, guarded by a timeout so it never blocks the agent.
+     * Passes through OpenClaw's messages (never replaces them) and adds
+     * auto-retrieval context as systemPromptAddition.
      */
     assemble(params: {
         sessionId: string;
         contextWindowTokens?: number;
-        /** OpenClaw's current message array (passed by OpenClaw, reloaded from JSONL). */
+        /** OpenClaw's current message array (reloaded from JSONL). */
         messages?: AgentMessage[];
     }): Promise<{
         messages: AgentMessage[];
@@ -85,22 +90,24 @@ export declare class LiaContextEngine {
     }>;
     /**
      * Compact the session's messages when context is getting full.
-     * Summarizes older messages with a fast model, keeps recent ones verbatim.
+     * Operates on OpenClaw's messages (passed as params), summarizes older half
+     * with a fast model, and returns the compacted result. Resets the flush counter
+     * since the message array changed shape.
      */
     compact(params: {
         sessionId: string;
         contextWindowTokens?: number;
+        /** OpenClaw's current messages to compact. */
+        messages?: AgentMessage[];
     }): Promise<{
         messages: AgentMessage[];
         compactedTokens: number;
     }>;
     /**
-     * After-turn hook: ingest new messages and check if compaction is needed.
+     * After-turn hook: flush new messages to transcript and check compaction threshold.
      * Called by OpenClaw after each model turn completes.
      *
-     * IMPORTANT: When afterTurn() is defined, OpenClaw calls it INSTEAD of
-     * ingest()/ingestBatch(). So we must handle message ingestion and transcript
-     * writing here, not just compaction checks.
+     * Uses a counter (lastFlushedCount) to identify new messages — no shadow copy needed.
      */
     afterTurn(params: {
         sessionId: string;
@@ -116,7 +123,6 @@ export declare class LiaContextEngine {
     /**
      * Explicit memory search — called by the memory_search tool.
      * Uses full hybrid search (BM25 + vec + HyDE) for best quality.
-     * Returns empty string if QMD client is not initialized or search fails.
      */
     search(params: {
         sessionId: string;
@@ -124,8 +130,7 @@ export declare class LiaContextEngine {
     }): Promise<string>;
     /**
      * Cleanup when the engine is being shut down.
-     * The QMD daemon runs independently and is not stopped here
-     * (it may be shared across plugin reloads).
+     * Clears lightweight session trackers only — no message data to lose.
      */
     dispose(): Promise<void>;
     /**

@@ -1,8 +1,8 @@
 /**
- * Tests for the LiaContextEngine (engine.ts).
+ * Tests for the LiaContextEngine v2 (engine.ts).
  *
- * Covers engine lifecycle (bootstrap, ingest, assemble, compact, afterTurn, dispose),
- * auto-retrieval integration, race condition protection, double-compaction prevention,
- * and findLastUserMessage logic.
+ * v2 key change: the engine no longer stores messages. OpenClaw owns the
+ * conversation. The engine passes messages through, flushes new ones to
+ * transcript using a counter, and compacts on demand.
  */
 export {};
