@@ -83,7 +83,7 @@ First run downloads the GGUF embedding model (~400MB). This only happens once.
 
 **From npm (recommended):**
 ```bash
-openclaw plugins install @belowthesurface/lia-memory-engine
+openclaw plugins install @kavinbmittal/lia-memory-engine
 ```
 
 **From source:**

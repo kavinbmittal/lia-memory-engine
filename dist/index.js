@@ -69,8 +69,8 @@ function register(api) {
         return;
     }
     // Build the completeFn wrapper for LLM access.
-    // Strategy: try api.completeSimple first (if exposed), then fall back to
-    // dynamically importing the pi-ai module (same pattern as Lossless Claw).
+    // Strategy: try api.completeSimple first (if exposed), then dynamically
+    // import the pi-ai module (OpenClaw's internal LLM router).
     const apiAny = api;
     const completeFn = async (model, systemPrompt, userContent) => {
         // Method 1: Direct API method (if available)
