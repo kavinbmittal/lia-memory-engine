@@ -14,66 +14,120 @@
  *   Install in OpenClaw extensions directory, then enable in agent config.
  *   The plugin registers itself as a context engine and a tool provider.
  */
+import type { OpenClawPluginApi } from "openclaw/plugin-sdk/core";
 declare const configSchema: {
-    type: string;
-    properties: {
-        enabled: {
-            type: string;
-            default: boolean;
-        };
-        compactionThreshold: {
-            type: string;
-            default: number;
-            minimum: number;
-            maximum: number;
-        };
-        compactionModel: {
-            type: string;
-            default: string;
-        };
-        autoRetrieval: {
-            type: string;
-            default: boolean;
-        };
-        autoRetrievalTimeoutMs: {
-            type: string;
-            default: number;
-            minimum: number;
-            maximum: number;
-        };
-        transcriptRetentionDays: {
-            type: string;
-            default: number;
-            minimum: number;
-        };
-        qmdPort: {
-            type: string;
-            default: number;
-        };
-        qmdHost: {
-            type: string;
-            default: string;
-        };
-        qmdCollectionName: {
-            type: string;
-            default: string;
-        };
-        enableVectorSearch: {
-            type: string;
-            default: boolean;
+    jsonSchema: {
+        type: string;
+        properties: {
+            enabled: {
+                type: string;
+                default: boolean;
+            };
+            compactionThreshold: {
+                type: string;
+                default: number;
+                minimum: number;
+                maximum: number;
+            };
+            compactionModel: {
+                type: string;
+                default: string;
+            };
+            autoRetrieval: {
+                type: string;
+                default: boolean;
+            };
+            autoRetrievalTimeoutMs: {
+                type: string;
+                default: number;
+                minimum: number;
+                maximum: number;
+            };
+            transcriptRetentionDays: {
+                type: string;
+                default: number;
+                minimum: number;
+            };
+            qmdPort: {
+                type: string;
+                default: number;
+            };
+            qmdHost: {
+                type: string;
+                default: string;
+            };
+            qmdCollectionName: {
+                type: string;
+                default: string;
+            };
+            enableVectorSearch: {
+                type: string;
+                default: boolean;
+            };
         };
     };
+    parse(value: unknown): {};
 };
 /**
  * Plugin registration function — called by OpenClaw when the plugin is loaded.
  */
-declare function register(api: unknown): void;
+declare function register(api: OpenClawPluginApi): void;
 /** Plugin default export — matches OpenClaw's expected plugin object shape. */
 declare const liaPlugin: {
     id: string;
     name: string;
     description: string;
     configSchema: {
+        jsonSchema: {
+            type: string;
+            properties: {
+                enabled: {
+                    type: string;
+                    default: boolean;
+                };
+                compactionThreshold: {
+                    type: string;
+                    default: number;
+                    minimum: number;
+                    maximum: number;
+                };
+                compactionModel: {
+                    type: string;
+                    default: string;
+                };
+                autoRetrieval: {
+                    type: string;
+                    default: boolean;
+                };
+                autoRetrievalTimeoutMs: {
+                    type: string;
+                    default: number;
+                    minimum: number;
+                    maximum: number;
+                };
+                transcriptRetentionDays: {
+                    type: string;
+                    default: number;
+                    minimum: number;
+                };
+                qmdPort: {
+                    type: string;
+                    default: number;
+                };
+                qmdHost: {
+                    type: string;
+                    default: string;
+                };
+                qmdCollectionName: {
+                    type: string;
+                    default: string;
+                };
+                enableVectorSearch: {
+                    type: string;
+                    default: boolean;
+                };
+            };
+        };
         parse(value: unknown): {};
     };
     register: typeof register;

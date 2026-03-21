@@ -115,7 +115,7 @@ export class LiaContextEngine {
     sessionKey?: string;
     sessionFile?: string;
     messages?: AgentMessage[];
-  }): Promise<{ ok: boolean }> {
+  }): Promise<{ bootstrapped: boolean; reason?: string }> {
     const { sessionId, sessionKey } = params;
 
     let workspaceDir: string;
@@ -123,7 +123,7 @@ export class LiaContextEngine {
       workspaceDir = this.deps.resolveWorkspaceDir(sessionId, sessionKey);
     } catch (err) {
       this.deps.logger.error(`[lia-memory-engine] Failed to resolve workspace for session ${sessionId} (key: ${sessionKey}):`, err);
-      return { ok: false };
+      return { bootstrapped: false, reason: `Failed to resolve workspace: ${err}` };
     }
 
     // Create memory directories if they don't exist
@@ -175,7 +175,7 @@ export class LiaContextEngine {
     });
 
     this.deps.logger.info(`[lia-memory-engine] Session ${sessionId} bootstrapped`);
-    return { ok: true };
+    return { bootstrapped: true };
   }
 
   /**
@@ -188,7 +188,7 @@ export class LiaContextEngine {
   async ingest(params: {
     sessionId: string;
     message: AgentMessage;
-  }): Promise<{ ok: boolean }> {
+  }): Promise<{ ingested: boolean }> {
     const { sessionId, message } = params;
     const session = this.getOrCreateSession(sessionId);
 
@@ -202,7 +202,7 @@ export class LiaContextEngine {
       }
     }
 
-    return { ok: true };
+    return { ingested: true };
   }
 
   /**

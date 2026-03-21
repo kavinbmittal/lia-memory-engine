@@ -81,6 +81,12 @@ First run downloads the GGUF embedding model (~400MB). This only happens once.
 
 ### 2. Install the plugin
 
+**From npm (recommended):**
+```bash
+openclaw plugins install @belowthesurface/lia-memory-engine
+```
+
+**From source:**
 ```bash
 cd ~/.openclaw/extensions
 git clone <this-repo> lia-memory-engine
@@ -88,6 +94,8 @@ cd lia-memory-engine
 npm install
 npm run build
 ```
+
+When installing from npm, OpenClaw discovers the plugin automatically — skip step 5 (the `plugins.load.paths` config).
 
 ### 3. Register your memory collection
 
@@ -113,10 +121,10 @@ In `~/.openclaw/openclaw.json`, add the minimum viable config:
 
 ```json
 {
-  “extensions”: [
-    “~/.openclaw/extensions/lia-memory-engine”
-  ],
   “plugins”: {
+    “load”: {
+      “paths”: [“~/.openclaw/extensions/lia-memory-engine”]
+    },
     “slots”: {
       “contextEngine”: “lia-memory-engine”
     },
@@ -145,7 +153,7 @@ All options go under `plugins.entries.lia-memory-engine.config` in `openclaw.jso
   “config”: {
     “compactionThreshold”: 0.80,
     “compactionModel”: “anthropic/claude-haiku-4-5”,
-    “autoRetrieval”: true,
+    “autoRetrieval”: false,
     “autoRetrievalTimeoutMs”: 500,
     “transcriptRetentionDays”: 180
   }
@@ -157,7 +165,7 @@ All options go under `plugins.entries.lia-memory-engine.config` in `openclaw.jso
 | `enabled` | boolean | `true` | Enable/disable the entire plugin |
 | `compactionThreshold` | number | `0.80` | Fraction of context window that triggers compaction (0.1–1.0). Measured against the live conversation snapshot each turn. At this threshold, the engine splits messages at the midpoint and summarizes the older half |
 | `compactionModel` | string | `anthropic/claude-haiku-4-5` | Model used for compaction summarization. Must be a fast model — it runs synchronously during compaction |
-| `autoRetrieval` | boolean | `true` | Automatically search memory files and inject relevant context before every model turn. Uses the last user message as the search query |
+| `autoRetrieval` | boolean | `false` | Automatically search memory files and inject relevant context before every model turn. Uses the last user message as the search query. Disabled by default — breaks prompt cache when enabled |
 | `autoRetrievalTimeoutMs` | number | `500` | Maximum time in ms to wait for auto-retrieval results. Keeps the agent responsive — if QMD doesn’t respond in time, the turn proceeds without memory context |
 | `transcriptRetentionDays` | number | `180` | Days to keep daily transcript files before cleanup. Set higher if you want longer memory recall |
 | `qmdHost` | string | `localhost` | QMD HTTP daemon hostname |
