@@ -16,10 +16,40 @@
  * - dispose() clears the client reference (daemon keeps running independently)
  */
 import { join } from "node:path";
+import { readFileSync } from "node:fs";
 import { compactMessages, estimateMessageTokens } from "./compact.js";
 import { writeTranscript } from "./auto-flush.js";
 import { searchForContext, searchMemory } from "./search.js";
 import { QMDClient } from "./qmd-client.js";
+/**
+ * Read messages from an OpenClaw session JSONL file.
+ * Each line is a JSON object; we extract entries with type: "message".
+ */
+function readMessagesFromSessionFile(sessionFile, logger) {
+    try {
+        const raw = readFileSync(sessionFile, "utf-8");
+        const messages = [];
+        for (const line of raw.split("\n")) {
+            if (!line.trim())
+                continue;
+            try {
+                const entry = JSON.parse(line);
+                if (entry.type === "message" && entry.message) {
+                    messages.push(entry.message);
+                }
+            }
+            catch {
+                // Skip malformed lines
+            }
+        }
+        logger.info(`[lia-memory-engine] Read ${messages.length} messages from session file`);
+        return messages;
+    }
+    catch (err) {
+        logger.warn(`[lia-memory-engine] Failed to read session file ${sessionFile}: ${String(err)}`);
+        return [];
+    }
+}
 /**
  * The Lia Context Engine for OpenClaw.
  *
@@ -185,8 +215,11 @@ export class LiaContextEngine {
     async compact(params) {
         const { sessionId, force } = params;
         const session = this.getOrCreateSession(sessionId);
-        // Use OpenClaw's messages if provided, otherwise we have nothing to compact
-        const inputMessages = params.messages ?? [];
+        // Use OpenClaw's messages if provided, otherwise read from session file
+        let inputMessages = params.messages ?? [];
+        if (inputMessages.length === 0 && params.sessionFile) {
+            inputMessages = readMessagesFromSessionFile(params.sessionFile, this.deps.logger);
+        }
         if (!this.config.enabled) {
             return {
                 ok: true,
