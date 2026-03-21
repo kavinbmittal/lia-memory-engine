@@ -23,7 +23,7 @@ const configSchema = {
         enabled: { type: "boolean", default: true },
         compactionThreshold: { type: "number", default: 0.80, minimum: 0.1, maximum: 1.0 },
         compactionModel: { type: "string", default: "anthropic/claude-haiku-4-5" },
-        autoRetrieval: { type: "boolean", default: true },
+        autoRetrieval: { type: "boolean", default: false },
         autoRetrievalTimeoutMs: { type: "number", default: 500, minimum: 100, maximum: 5000 },
         transcriptRetentionDays: { type: "number", default: 180, minimum: 1 },
         qmdPort: { type: "number", default: 8181 },

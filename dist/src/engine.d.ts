@@ -96,12 +96,28 @@ export declare class LiaContextEngine {
      */
     compact(params: {
         sessionId: string;
+        sessionKey?: string;
+        sessionFile?: string;
         contextWindowTokens?: number;
+        tokenBudget?: number;
         /** OpenClaw's current messages to compact. */
         messages?: AgentMessage[];
+        /** Force compaction regardless of threshold (e.g. manual /compact trigger). */
+        force?: boolean;
+        currentTokenCount?: number;
+        compactionTarget?: "budget" | "threshold";
+        customInstructions?: string;
+        runtimeContext?: Record<string, unknown>;
     }): Promise<{
+        ok: boolean;
+        compacted: boolean;
+        reason?: string;
         messages: AgentMessage[];
         compactedTokens: number;
+        result?: {
+            tokensBefore: number;
+            tokensAfter?: number;
+        };
     }>;
     /**
      * After-turn hook: flush new messages to transcript and check compaction threshold.
@@ -117,6 +133,8 @@ export declare class LiaContextEngine {
         contextWindowTokens?: number;
         tokenBudget?: number;
         runtimeContext?: Record<string, unknown>;
+        /** Force compaction signal — bypasses threshold check (e.g. manual /compact). */
+        force?: boolean;
     }): Promise<{
         needsCompaction: boolean;
     }>;

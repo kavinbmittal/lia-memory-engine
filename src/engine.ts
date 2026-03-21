@@ -235,14 +235,28 @@ export class LiaContextEngine {
    */
   async compact(params: {
     sessionId: string;
+    sessionKey?: string;
+    sessionFile?: string;
     contextWindowTokens?: number;
+    tokenBudget?: number;
     /** OpenClaw's current messages to compact. */
     messages?: AgentMessage[];
     /** Force compaction regardless of threshold (e.g. manual /compact trigger). */
     force?: boolean;
+    currentTokenCount?: number;
+    compactionTarget?: "budget" | "threshold";
+    customInstructions?: string;
+    runtimeContext?: Record<string, unknown>;
   }): Promise<{
+    ok: boolean;
+    compacted: boolean;
+    reason?: string;
     messages: AgentMessage[];
     compactedTokens: number;
+    result?: {
+      tokensBefore: number;
+      tokensAfter?: number;
+    };
   }> {
     const { sessionId, force } = params;
     const session = this.getOrCreateSession(sessionId);
@@ -252,6 +266,9 @@ export class LiaContextEngine {
 
     if (!this.config.enabled) {
       return {
+        ok: true,
+        compacted: false,
+        reason: "engine disabled",
         messages: [...inputMessages],
         compactedTokens: estimateMessageTokens(inputMessages),
       };
@@ -261,6 +278,9 @@ export class LiaContextEngine {
     if (session.compacting) {
       this.deps.logger.warn(`[lia-memory-engine] Compaction already in progress for session ${sessionId} — skipping`);
       return {
+        ok: true,
+        compacted: false,
+        reason: "compaction already in progress",
         messages: [...inputMessages],
         compactedTokens: estimateMessageTokens(inputMessages),
       };
@@ -294,12 +314,21 @@ export class LiaContextEngine {
 
       const finalTokens = estimateMessageTokens(compactedMessages);
       return {
+        ok: true,
+        compacted: true,
         messages: [...compactedMessages],
         compactedTokens: finalTokens,
+        result: {
+          tokensBefore,
+          tokensAfter,
+        },
       };
     } catch (err) {
       this.deps.logger.error(`[lia-memory-engine] Compaction failed for session ${sessionId}:`, err);
       return {
+        ok: false,
+        compacted: false,
+        reason: String(err),
         messages: [...inputMessages],
         compactedTokens: estimateMessageTokens(inputMessages),
       };
