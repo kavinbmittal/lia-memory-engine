@@ -29,7 +29,7 @@ export const DEFAULT_CONFIG: LiaConfig = {
   enabled: true,
   compactionThreshold: 0.80,
   compactionModel: "anthropic/claude-haiku-4-5",
-  autoRetrieval: true,
+  autoRetrieval: false,
   autoRetrievalTimeoutMs: 500,
   transcriptRetentionDays: 180,
   qmdPort: 8181,
