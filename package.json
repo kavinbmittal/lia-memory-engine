@@ -1,5 +1,5 @@
 {
-  "name": "@belowthesurface/lia-memory-engine",
+  "name": "@kavinbmittal/lia-memory-engine",
   "version": "1.0.0",
   "description": "Lia-style context engine for OpenClaw — structured compaction, auto-flush, auto-retrieval",
   "type": "module",
