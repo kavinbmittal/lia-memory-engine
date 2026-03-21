@@ -238,11 +238,13 @@ export class LiaContextEngine {
     contextWindowTokens?: number;
     /** OpenClaw's current messages to compact. */
     messages?: AgentMessage[];
+    /** Force compaction regardless of threshold (e.g. manual /compact trigger). */
+    force?: boolean;
   }): Promise<{
     messages: AgentMessage[];
     compactedTokens: number;
   }> {
-    const { sessionId } = params;
+    const { sessionId, force } = params;
     const session = this.getOrCreateSession(sessionId);
 
     // Use OpenClaw's messages if provided, otherwise we have nothing to compact
@@ -262,6 +264,10 @@ export class LiaContextEngine {
         messages: [...inputMessages],
         compactedTokens: estimateMessageTokens(inputMessages),
       };
+    }
+
+    if (force) {
+      this.deps.logger.info(`[lia-memory-engine] Forced compaction requested for session ${sessionId}`);
     }
 
     session.compacting = true;
@@ -316,6 +322,8 @@ export class LiaContextEngine {
     contextWindowTokens?: number;
     tokenBudget?: number;
     runtimeContext?: Record<string, unknown>;
+    /** Force compaction signal — bypasses threshold check (e.g. manual /compact). */
+    force?: boolean;
   }): Promise<{ needsCompaction: boolean }> {
     if (!this.config.enabled) {
       return { needsCompaction: false };
@@ -360,13 +368,14 @@ export class LiaContextEngine {
     const threshold = Math.floor(contextWindow * this.config.compactionThreshold);
 
     const overThreshold = estimatedTokens >= threshold;
-    const needsCompaction = overThreshold && !session.pendingCompaction && !session.compacting;
+    const forced = params.force === true;
+    const needsCompaction = forced || (overThreshold && !session.pendingCompaction && !session.compacting);
 
     if (needsCompaction) {
       session.pendingCompaction = true;
       this.deps.logger.info(
-        `[lia-memory-engine] Compaction needed for session ${sessionId}: ` +
-        `${estimatedTokens} tokens >= ${threshold} threshold (${this.config.compactionThreshold * 100}% of ${contextWindow})`
+        `[lia-memory-engine] Compaction ${forced ? "forced" : "needed"} for session ${sessionId}: ` +
+        `${estimatedTokens} tokens${forced ? " (manual trigger)" : ` >= ${threshold} threshold (${this.config.compactionThreshold * 100}% of ${contextWindow})`}`
       );
     }
 
