@@ -85,15 +85,15 @@ describe("bootstrap", () => {
     it("should initialize session successfully", async () => {
         const engine = new LiaContextEngine(buildConfig(), buildDeps(tempDir));
         const result = await engine.bootstrap({ sessionId: "test-1" });
-        assert.strictEqual(result.ok, true);
+        assert.strictEqual(result.bootstrapped, true);
     });
-    it("should return ok:false when workspace resolution fails", async () => {
+    it("should return bootstrapped:false when workspace resolution fails", async () => {
         const deps = buildDeps(tempDir, {
             resolveWorkspaceDir: () => { throw new Error("Workspace not found"); },
         });
         const engine = new LiaContextEngine(buildConfig(), deps);
         const result = await engine.bootstrap({ sessionId: "bad-session" });
-        assert.strictEqual(result.ok, false);
+        assert.strictEqual(result.bootstrapped, false);
     });
 });
 // ── Ingest ──────────────────────────────────────────────────────────────────
@@ -110,7 +110,7 @@ describe("ingest", () => {
         await engine.bootstrap({ sessionId: "ingest-1" });
         const msg = { role: "user", content: "Hello there" };
         const result = await engine.ingest({ sessionId: "ingest-1", message: msg });
-        assert.strictEqual(result.ok, true);
+        assert.strictEqual(result.ingested, true);
         // Verify transcript was written
         const date = new Date().toISOString().split("T")[0];
         const logPath = join(tempDir, "memory", "daily", `${date}.md`);
@@ -121,7 +121,7 @@ describe("ingest", () => {
         const engine = new LiaContextEngine(buildConfig(), buildDeps(tempDir));
         const msg = { role: "user", content: "Lazy init test" };
         const result = await engine.ingest({ sessionId: "lazy-1", message: msg });
-        assert.strictEqual(result.ok, true);
+        assert.strictEqual(result.ingested, true);
     });
     it("should not write transcript when disabled", async () => {
         const engine = new LiaContextEngine(buildConfig({ enabled: false }), buildDeps(tempDir));

@@ -58,7 +58,8 @@ export declare class LiaContextEngine {
         sessionFile?: string;
         messages?: AgentMessage[];
     }): Promise<{
-        ok: boolean;
+        bootstrapped: boolean;
+        reason?: string;
     }>;
     /**
      * Ingest a new message into the session.
@@ -71,7 +72,7 @@ export declare class LiaContextEngine {
         sessionId: string;
         message: AgentMessage;
     }): Promise<{
-        ok: boolean;
+        ingested: boolean;
     }>;
     /**
      * Assemble messages for the next model run.

@@ -15,12 +15,14 @@
  *   The plugin registers itself as a context engine and a tool provider.
  */
 
+import { Type } from "@sinclair/typebox";
+import type { OpenClawPluginApi } from "openclaw/plugin-sdk/core";
 import { LiaContextEngine } from "./src/engine.js";
 import { formatSearchResults } from "./src/search.js";
 import type { LiaConfig } from "./src/types.js";
 import { DEFAULT_CONFIG } from "./src/types.js";
 
-const configSchema = {
+const jsonSchema = {
   type: "object",
   properties: {
     enabled: { type: "boolean", default: true },
@@ -32,21 +34,23 @@ const configSchema = {
     qmdPort: { type: "number", default: 8181 },
     qmdHost: { type: "string", default: "localhost" },
     qmdCollectionName: { type: "string", default: "lia-memory" },
-    enableVectorSearch: { type: "boolean", default: false },
+    enableVectorSearch: { type: "boolean", default: true },
+  },
+};
+
+const configSchema = {
+  jsonSchema,
+  parse(value: unknown) {
+    return value ?? {};
   },
 };
 
 /**
  * Plugin registration function — called by OpenClaw when the plugin is loaded.
  */
-function register(api: unknown): void {
-  const typedApi = api as Record<string, unknown>;
-
-  // Parse config with defaults
-  const pluginsConfig = (typedApi.config as Record<string, unknown> | undefined)?.plugins as Record<string, unknown> | undefined;
-  const pluginsEntries = pluginsConfig?.entries as Record<string, unknown> | undefined;
-  const pluginEntry = pluginsEntries?.["lia-memory-engine"] as Record<string, unknown> | undefined;
-  const pluginConfig: Record<string, unknown> = (pluginEntry?.config as Record<string, unknown> | undefined) ?? {};
+function register(api: OpenClawPluginApi): void {
+  // Use api.pluginConfig (pre-parsed by OpenClaw) with defaults
+  const pluginConfig = (api.pluginConfig ?? {}) as Record<string, unknown>;
 
   const config: LiaConfig = {
     enabled: (pluginConfig.enabled as boolean | undefined) ?? DEFAULT_CONFIG.enabled,
@@ -61,20 +65,27 @@ function register(api: unknown): void {
     enableVectorSearch: (pluginConfig.enableVectorSearch as boolean | undefined) ?? DEFAULT_CONFIG.enableVectorSearch,
   };
 
-  const log = typedApi.log as Record<string, (...args: unknown[]) => void> | undefined;
+  // Adapt PluginLogger (single string arg) to engine's logger (variadic args)
+  const pluginLogger = api.logger;
+  const logger = {
+    info: (...args: unknown[]) => pluginLogger.info?.(args.map(String).join(" ")),
+    warn: (...args: unknown[]) => pluginLogger.warn?.(args.map(String).join(" ")),
+    error: (...args: unknown[]) => pluginLogger.error?.(args.map(String).join(" ")),
+  };
 
   if (!config.enabled) {
-    log?.info?.("[lia-memory-engine] Plugin disabled via config");
+    logger.info("[lia-memory-engine] Plugin disabled via config");
     return;
   }
 
   // Build the completeFn wrapper for LLM access.
   // Strategy: try api.completeSimple first (if exposed), then fall back to
   // dynamically importing the pi-ai module (same pattern as Lossless Claw).
+  const apiAny = api as Record<string, unknown>;
   const completeFn = async (model: string, systemPrompt: string, userContent: string): Promise<string> => {
     // Method 1: Direct API method (if available)
-    if (typeof typedApi.completeSimple === "function") {
-      return (typedApi.completeSimple as (m: string, s: string, u: string) => Promise<string>)(model, systemPrompt, userContent);
+    if (typeof apiAny.completeSimple === "function") {
+      return (apiAny.completeSimple as (m: string, s: string, u: string) => Promise<string>)(model, systemPrompt, userContent);
     }
 
     // Method 2: Dynamic import of pi-ai (OpenClaw's internal LLM router)
@@ -123,13 +134,6 @@ function register(api: unknown): void {
     );
   };
 
-  // Build logger wrapper
-  const logger = {
-    info: (...args: unknown[]) => log?.info?.(...args),
-    warn: (...args: unknown[]) => log?.warn?.(...args),
-    error: (...args: unknown[]) => log?.error?.(...args),
-  };
-
   // Build workspace resolver — must resolve to the correct agent's workspace
   // based on the session key (e.g., "agent:midas:main" → midas's workspace).
   const resolveWorkspaceDir = (sessionId: string, sessionKey?: string): string => {
@@ -137,7 +141,7 @@ function register(api: unknown): void {
     const agentId = sessionKey ? extractAgentId(sessionKey) : undefined;
 
     // Look up the agent's workspace from the config's agent list
-    const agentsConfig = (typedApi.config as Record<string, unknown> | undefined)?.agents as Record<string, unknown> | undefined;
+    const agentsConfig = (api.config as Record<string, unknown>)?.agents as Record<string, unknown> | undefined;
     const agentList = agentsConfig?.list as Array<Record<string, unknown>> | undefined;
 
     if (agentId && agentList) {
@@ -154,15 +158,7 @@ function register(api: unknown): void {
     }
 
     // Try api.resolvePath (resolves relative to the plugin's registration context)
-    if (typeof typedApi.resolvePath === "function") {
-      return (typedApi.resolvePath as (p: string) => string)(".");
-    }
-
-    // No valid workspace directory found — refuse to fall back to cwd (path traversal risk)
-    throw new Error(
-      `[lia-memory-engine] Cannot resolve workspace directory for session "${sessionId}" ` +
-      `(key: ${sessionKey ?? "unknown"}). Ensure agent config has a workspace path.`
-    );
+    return api.resolvePath(".");
   };
 
   // Create the engine
@@ -172,24 +168,18 @@ function register(api: unknown): void {
     resolveWorkspaceDir,
   });
 
-  // Register as context engine — OpenClaw expects (id, factory) signature
-  if (typeof typedApi.registerContextEngine === "function") {
-    (typedApi.registerContextEngine as (id: string, factory: () => LiaContextEngine) => void)(
-      "lia-memory-engine",
-      () => engine
-    );
-    logger.info("[lia-memory-engine] Registered as context engine");
-  } else {
-    logger.warn(
-      "[lia-memory-engine] api.registerContextEngine not available — " +
-      "engine features (compaction, auto-flush, auto-retrieval) will not work. " +
-      "Only the memory_search tool will be registered."
-    );
-  }
+  // Register as context engine (cast needed: our AgentMessage type is structurally
+  // compatible but TypeScript sees different module origins)
+  api.registerContextEngine(
+    "lia-memory-engine",
+    (() => engine) as unknown as Parameters<typeof api.registerContextEngine>[1]
+  );
+  logger.info("[lia-memory-engine] Registered as context engine");
 
   // Warn if the plugin loaded but isn't slotted as the active context engine.
   // Without the slot assignment, OpenClaw silently falls back to built-in compaction
   // and none of the engine lifecycle methods (assemble, ingest, compact, auto-flush) fire.
+  const pluginsConfig = (api.config as Record<string, unknown>)?.plugins as Record<string, unknown> | undefined;
   const slotsConfig = pluginsConfig?.slots as Record<string, unknown> | undefined;
   const contextEngineSlot = slotsConfig?.contextEngine as string | undefined;
   if (contextEngineSlot !== "lia-memory-engine") {
@@ -201,7 +191,7 @@ function register(api: unknown): void {
   }
 
   // Register memory_search tool
-  registerMemorySearchTool(typedApi, engine, logger);
+  registerMemorySearchTool(api, engine);
 
   logger.info(
     `[lia-memory-engine] Plugin loaded (compaction: ${config.compactionModel}, ` +
@@ -215,60 +205,49 @@ function register(api: unknown): void {
  * Allows agents to explicitly search their memory files using QMD.
  */
 function registerMemorySearchTool(
-  api: Record<string, unknown>,
+  api: OpenClawPluginApi,
   engine: LiaContextEngine,
-  logger: { info: (...args: unknown[]) => void; error: (...args: unknown[]) => void }
 ): void {
-  if (typeof api.registerTool !== "function") {
-    logger.info("[lia-memory-engine] api.registerTool not available — skipping memory_search tool");
-    return;
-  }
+  const logger = api.logger;
 
-  (api.registerTool as (tool: unknown, opts: unknown) => void)({
+  api.registerTool({
     name: "memory_search",
+    label: "Memory Search",
     description:
       "Search conversation history and memory files for specific topics, facts, or past discussions. " +
       "Returns matching excerpts with timestamps. Use when asked about past conversations, " +
       "or when you need to recall specific details from earlier sessions.",
-    parameters: {
-      type: "object",
-      properties: {
-        query: {
-          type: "string",
-          description: "Keywords, names, topics, or phrases to search for.",
-        },
-      },
-      required: ["query"],
-    },
-    async execute(toolCallId: string, params: { query: string }, ctx?: Record<string, unknown>) {
+    parameters: Type.Object({
+      query: Type.String({ description: "Keywords, names, topics, or phrases to search for." }),
+    }),
+    async execute(toolCallId: string, params: { query: string }) {
       const query = String(params.query ?? "").trim();
       if (!query) {
         return {
-          content: [{ type: "text", text: "Query is required for memory search." }],
-          isError: true,
+          content: [{ type: "text" as const, text: "Query is required for memory search." }],
+          details: undefined,
         };
       }
 
       try {
-        const sessionId = String(ctx?.sessionKey ?? ctx?.sessionId ?? "default");
-        const result = await engine.search({ sessionId, query });
+        const result = await engine.search({ sessionId: "default", query });
         const formatted = formatSearchResults(result, query);
         return {
-          content: [{ type: "text", text: formatted }],
-          isError: false,
+          content: [{ type: "text" as const, text: formatted }],
+          details: undefined,
         };
       } catch (err) {
         const errMsg = err instanceof Error ? err.message : String(err);
-        logger.error(`[lia-memory-engine] memory_search failed:`, err);
+        logger.error?.(`[lia-memory-engine] memory_search failed: ${errMsg}`);
         return {
-          content: [{ type: "text", text: `Memory search failed: ${errMsg}` }],
-          isError: true,
+          content: [{ type: "text" as const, text: `Memory search failed: ${errMsg}` }],
+          details: undefined,
         };
       }
     },
-  }, { optional: true });
+  } as unknown as Parameters<typeof api.registerTool>[0], { optional: true });
 
-  logger.info("[lia-memory-engine] Registered memory_search tool");
+  logger.info?.("[lia-memory-engine] Registered memory_search tool");
 }
 
 /**
@@ -289,11 +268,7 @@ const liaPlugin = {
   id: "lia-memory-engine",
   name: "Lia Memory Engine",
   description: "Lia-style context engine — structured compaction, auto-flush, QMD hybrid search auto-retrieval",
-  configSchema: {
-    parse(value: unknown) {
-      return value ?? {};
-    },
-  },
+  configSchema,
   register,
 };
 

@@ -1,5 +1,6 @@
 {
   "id": "lia-memory-engine",
+  "kind": "context-engine",
   "name": "Lia Memory Engine",
   "version": "1.0.0",
   "description": "Lia-style context engine for OpenClaw — structured compaction via Haiku, auto-flush transcripts, BM25 auto-retrieval, and memory_search tool.",
@@ -26,7 +27,7 @@
       "autoRetrieval": {
         "type": "boolean",
         "description": "Automatically search memory files and inject relevant context on every turn",
-        "default": true
+        "default": false
       },
       "autoRetrievalTimeoutMs": {
         "type": "number",

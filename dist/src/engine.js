@@ -97,7 +97,7 @@ export class LiaContextEngine {
         }
         catch (err) {
             this.deps.logger.error(`[lia-memory-engine] Failed to resolve workspace for session ${sessionId} (key: ${sessionKey}):`, err);
-            return { ok: false };
+            return { bootstrapped: false, reason: `Failed to resolve workspace: ${err}` };
         }
         // Create memory directories if they don't exist
         let memoryDir;
@@ -147,7 +147,7 @@ export class LiaContextEngine {
             lastFlushedCount: 0,
         });
         this.deps.logger.info(`[lia-memory-engine] Session ${sessionId} bootstrapped`);
-        return { ok: true };
+        return { bootstrapped: true };
     }
     /**
      * Ingest a new message into the session.
@@ -169,7 +169,7 @@ export class LiaContextEngine {
                 this.deps.logger.error(`[lia-memory-engine] Failed to write transcript for session ${sessionId}:`, err);
             }
         }
-        return { ok: true };
+        return { ingested: true };
     }
     /**
      * Assemble messages for the next model run.
