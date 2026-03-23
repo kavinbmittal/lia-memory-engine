@@ -137,7 +137,7 @@ export class LiaContextEngine {
             if (this.deps.qmdClient === undefined) {
                 this.daemonRunning = await this.qmdClient.startDaemon();
             }
-            this.qmdClient.embedBackground();
+            // Embedding is deferred to search time — no need to run on every bootstrap
         }
         this.sessions.set(sessionId, {
             workspaceDir,
@@ -163,7 +163,6 @@ export class LiaContextEngine {
         if (this.config.enabled) {
             try {
                 await writeTranscript(session.workspaceDir, [message]);
-                this.qmdClient?.embedBackground();
             }
             catch (err) {
                 this.deps.logger.error(`[lia-memory-engine] Failed to write transcript for session ${sessionId}:`, err);
@@ -309,7 +308,6 @@ export class LiaContextEngine {
                 session.lastFlushedCount = conversationMessages.length;
                 try {
                     await writeTranscript(session.workspaceDir, newMessages);
-                    this.qmdClient?.embedBackground();
                 }
                 catch (err) {
                     this.deps.logger.error(`[lia-memory-engine] Failed to write transcript in afterTurn for session ${sessionId}:`, err);
@@ -339,6 +337,8 @@ export class LiaContextEngine {
         if (this.qmdClient === null) {
             return "";
         }
+        // Index any new transcripts before searching so results are fresh
+        await this.qmdClient.embed();
         return searchMemory(this.qmdClient, params.query, this.daemonRunning);
     }
     /**

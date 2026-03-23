@@ -56,11 +56,11 @@ export declare class QMDClient {
      */
     ensureCollection(): Promise<void>;
     /**
-     * Trigger background embedding for the collection.
-     * Fire-and-forget: runs `qmd embed -c {collectionName}` without awaiting.
-     * Logs completion or failure when the process exits.
+     * Run embedding for the collection and wait for it to complete.
+     * Used before search to ensure the index is up to date.
+     * Times out after 30 seconds to prevent blocking indefinitely.
      */
-    embedBackground(): void;
+    embed(): Promise<void>;
     /**
      * Search the QMD collection via the HTTP daemon.
      * Uses hybrid search when enableVectorSearch is true:
