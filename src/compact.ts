@@ -108,20 +108,30 @@ function formatMessageText(msg: AgentMessage): string {
   return `${role}: ${text}`;
 }
 
+/** Token counting function — either API-based or local estimate. */
+export type CountTokensFn = (messages: AgentMessage[]) => Promise<number>;
+
 /**
  * Split messages into chunks that each fit within MAX_CHUNK_TOKENS.
  * Always splits at user message boundaries so turn pairs stay together.
+ * Uses the provided countTokensFn for accurate token counts.
  * Exported for testing.
  */
-export function chunkMessages(messages: AgentMessage[]): AgentMessage[][] {
+export async function chunkMessages(
+  messages: AgentMessage[],
+  countTokensFn?: CountTokensFn,
+): Promise<AgentMessage[][]> {
   if (messages.length === 0) return [];
+
+  // Use API-based counting if available, otherwise fall back to local estimate
+  const countFn = countTokensFn ?? ((msgs: AgentMessage[]) => Promise.resolve(estimateMessageTokens(msgs)));
 
   const chunks: AgentMessage[][] = [];
   let currentChunk: AgentMessage[] = [];
   let currentTokens = 0;
 
   for (const msg of messages) {
-    const msgTokens = estimateMessageParamTokens(msg);
+    const msgTokens = await countFn([msg]);
 
     // If adding this message would exceed the limit and the chunk isn't empty,
     // start a new chunk — but only split at user message boundaries.
@@ -175,13 +185,15 @@ function formatChunkTranscript(messages: AgentMessage[]): string {
 export async function compactMessages(
   messages: AgentMessage[],
   completeFn: (model: string, systemPrompt: string, userContent: string) => Promise<string>,
-  model: string
+  model: string,
+  countTokensFn?: CountTokensFn,
 ): Promise<{
   compactedMessages: AgentMessage[];
   tokensBefore: number;
   tokensAfter: number;
 }> {
-  const tokensBefore = estimateMessageTokens(messages);
+  const countFn = countTokensFn ?? ((msgs: AgentMessage[]) => Promise.resolve(estimateMessageTokens(msgs)));
+  const tokensBefore = await countFn(messages);
 
   // Need at least 4 messages to make compaction worthwhile
   if (messages.length < 4) {
@@ -189,6 +201,7 @@ export async function compactMessages(
   }
 
   // Split at midpoint — summarize older half, keep recent half verbatim
+  // Note: midpoint logic uses message count, not tokens — no API call needed here
   const midpoint = Math.floor(messages.length / 2);
 
   // Ensure we split on a user message boundary (most APIs require user-first)
@@ -212,7 +225,7 @@ export async function compactMessages(
   const recentHalf = messages.slice(splitIndex);
 
   // Split older half into chunks that fit within the model's context limit
-  const chunks = chunkMessages(olderHalf);
+  const chunks = await chunkMessages(olderHalf, countTokensFn);
   let summary: string;
 
   if (chunks.length === 1) {
@@ -264,7 +277,7 @@ export async function compactMessages(
   };
 
   const compactedMessages = [summaryMessage, ackMessage, ...recentHalf];
-  const tokensAfter = estimateMessageTokens(compactedMessages);
+  const tokensAfter = await countFn(compactedMessages);
 
   return { compactedMessages, tokensBefore, tokensAfter };
 }

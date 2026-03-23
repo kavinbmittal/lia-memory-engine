@@ -17,3 +17,11 @@
 - [ ] Write tests for chunking, boundaries, multi-chunk, failure, and regression
 - [ ] Build and verify all tests pass
 - [ ] Deferred: migrate to delegateCompactionToRuntime() when OpenClaw upgraded to v2026.3.22+
+
+## 2026-03-23-accurate-token-counting
+
+- [ ] Add Anthropic token counting API call to engine (countTokens wrapper with fallback)
+- [ ] Replace estimateMessageTokens in afterTurn threshold check with API call
+- [ ] Replace estimateMessageTokens in compact() for chunk splitting with API call
+- [ ] Replace estimateMessageTokens in compact() for before/after logging with API call
+- [ ] Build and run tests

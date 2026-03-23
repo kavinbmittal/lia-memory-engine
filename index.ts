@@ -236,9 +236,49 @@ function register(api: OpenClawPluginApi): void {
     return api.resolvePath(".");
   };
 
+  // Build the countTokensFn using the Anthropic SDK's token counting API.
+  // Falls back to local estimate (chars/4) if the API is unavailable.
+  const countTokensFn = async (messages: Array<{ role: string; content: unknown }>): Promise<number> => {
+    // Quick exit for empty messages
+    if (messages.length === 0) return 0;
+
+    try {
+      const anthropic = await import("@anthropic-ai/sdk") as Record<string, unknown>;
+      const AnthropicClass = (anthropic.default ?? anthropic) as new (opts?: { apiKey?: string }) => {
+        messages: {
+          countTokens: (opts: {
+            model: string;
+            messages: Array<{ role: string; content: unknown }>;
+          }) => Promise<{ input_tokens: number }>;
+        };
+      };
+
+      const apiKey = resolveApiKey("anthropic");
+      const client = new AnthropicClass(apiKey ? { apiKey } : undefined);
+
+      // Parse model to get just the model ID (e.g. "claude-haiku-4-5" from "anthropic/claude-haiku-4-5")
+      const modelId = config.compactionModel.includes("/")
+        ? config.compactionModel.split("/").slice(1).join("/")
+        : config.compactionModel;
+
+      const result = await client.messages.countTokens({
+        model: modelId,
+        messages: messages as Array<{ role: "user" | "assistant"; content: string }>,
+      });
+
+      return result.input_tokens;
+    } catch (err) {
+      // Fallback to local estimate — don't let token counting failures break anything
+      logger.warn(`[lia-memory-engine] Token counting API failed, using estimate: ${err instanceof Error ? err.message : String(err)}`);
+      const { estimateMessageTokens } = await import("./src/compact.js");
+      return estimateMessageTokens(messages as Array<{ role: "user" | "assistant"; content: string | Array<{ type: string }> }>);
+    }
+  };
+
   // Create the engine
   const engine = new LiaContextEngine(config, {
     completeFn,
+    countTokensFn,
     logger,
     resolveWorkspaceDir,
   });

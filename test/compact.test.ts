@@ -315,31 +315,31 @@ describe("chunkMessages", () => {
     return msgs;
   }
 
-  it("should return 1 chunk for messages under 150k tokens", () => {
+  it("should return 1 chunk for messages under 150k tokens", async () => {
     // 20 messages × 60 chars each = 1200 chars → ~300 tokens, well under 150k
     const messages = buildLargeMessages(20, 50);
-    const chunks = chunkMessages(messages);
+    const chunks = await chunkMessages(messages);
     assert.strictEqual(chunks.length, 1);
     assert.strictEqual(chunks[0].length, 20);
   });
 
-  it("should return empty array for empty input", () => {
-    const chunks = chunkMessages([]);
+  it("should return empty array for empty input", async () => {
+    const chunks = await chunkMessages([]);
     assert.strictEqual(chunks.length, 0);
   });
 
-  it("should split into multiple chunks when exceeding 150k tokens", () => {
+  it("should split into multiple chunks when exceeding 150k tokens", async () => {
     // 150k tokens = 600k chars. Create messages totaling ~900k chars → should be 2+ chunks
     // 100 messages × 9000 chars each = 900k chars → ~225k tokens → 2 chunks
     const messages = buildLargeMessages(100, 9000);
-    const chunks = chunkMessages(messages);
+    const chunks = await chunkMessages(messages);
     assert.ok(chunks.length >= 2, `expected 2+ chunks, got ${chunks.length}`);
   });
 
-  it("should split at user message boundaries", () => {
+  it("should split at user message boundaries", async () => {
     // Each chunk should start with a user message (index 0 of each chunk)
     const messages = buildLargeMessages(100, 9000);
-    const chunks = chunkMessages(messages);
+    const chunks = await chunkMessages(messages);
 
     for (let i = 0; i < chunks.length; i++) {
       assert.strictEqual(
@@ -350,11 +350,11 @@ describe("chunkMessages", () => {
     }
   });
 
-  it("should keep user-assistant turn pairs together", () => {
+  it("should keep user-assistant turn pairs together", async () => {
     // With alternating user/assistant, no chunk should end with a user message
     // (the assistant response should always follow)
     const messages = buildLargeMessages(100, 9000);
-    const chunks = chunkMessages(messages);
+    const chunks = await chunkMessages(messages);
 
     for (let i = 0; i < chunks.length - 1; i++) {
       const lastMsg = chunks[i][chunks[i].length - 1];
@@ -366,12 +366,12 @@ describe("chunkMessages", () => {
     }
   });
 
-  it("should handle a single oversized message", () => {
+  it("should handle a single oversized message", async () => {
     // One message that exceeds 150k tokens — should still produce 1 chunk
     const messages: AgentMessage[] = [
       { role: "user", content: "x".repeat(700_000) }, // ~175k tokens
     ];
-    const chunks = chunkMessages(messages);
+    const chunks = await chunkMessages(messages);
     assert.strictEqual(chunks.length, 1, "single message can't be split further");
   });
 });

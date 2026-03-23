@@ -33,6 +33,11 @@ const noopQmdClient = {
 function buildDeps(workspaceDir, overrides) {
     return {
         completeFn: async (_model, _system, _user) => "Test summary of conversation.",
+        countTokensFn: async (messages) => {
+            // Local estimate for tests — no API call
+            const { estimateMessageTokens } = await import("../src/compact.js");
+            return estimateMessageTokens(messages);
+        },
         logger: {
             info: () => { },
             warn: () => { },
