@@ -210,9 +210,59 @@ function register(api) {
             const modelId = config.compactionModel.includes("/")
                 ? config.compactionModel.split("/").slice(1).join("/")
                 : config.compactionModel;
+            // Convert OpenClaw message roles to Anthropic API roles.
+            // OpenClaw uses "toolResult"/"toolUse" roles; Anthropic only accepts "user"/"assistant".
+            const convertedMessages = messages.map(msg => {
+                const role = typeof msg.role === "string" ? msg.role : "user";
+                let anthropicRole;
+                if (role === "assistant" || role === "toolUse") {
+                    anthropicRole = "assistant";
+                }
+                else {
+                    // "user", "toolResult", and any other role map to "user"
+                    anthropicRole = "user";
+                }
+                // Extract text content for counting — Anthropic API expects string or content blocks
+                let content;
+                if (typeof msg.content === "string") {
+                    content = msg.content;
+                }
+                else if (Array.isArray(msg.content)) {
+                    content = msg.content
+                        .map((block) => {
+                        if (typeof block === "string")
+                            return block;
+                        if (block && typeof block === "object" && "text" in block)
+                            return block.text;
+                        if (block && typeof block === "object")
+                            return JSON.stringify(block);
+                        return "";
+                    })
+                        .join("\n");
+                }
+                else {
+                    content = String(msg.content ?? "");
+                }
+                return { role: anthropicRole, content };
+            });
+            // Merge consecutive messages with the same role — Anthropic API requires alternating roles
+            const mergedMessages = [];
+            for (const msg of convertedMessages) {
+                const last = mergedMessages[mergedMessages.length - 1];
+                if (last && last.role === msg.role) {
+                    last.content += "\n" + msg.content;
+                }
+                else {
+                    mergedMessages.push({ ...msg });
+                }
+            }
+            // Ensure conversation starts with user and alternates
+            if (mergedMessages.length > 0 && mergedMessages[0].role !== "user") {
+                mergedMessages.unshift({ role: "user", content: "(context)" });
+            }
             const result = await client.messages.countTokens({
                 model: modelId,
-                messages: messages,
+                messages: mergedMessages,
             });
             return result.input_tokens;
         }
