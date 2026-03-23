@@ -6,6 +6,10 @@
  * model (Haiku), and replaces them with a structured summary that
  * preserves Q&A structure, decisions, commitments, and emotions.
  *
+ * When the older half exceeds the model's context limit (200k tokens for
+ * Haiku), it's split into chunks at user message boundaries. Each chunk
+ * is summarized separately, then the summaries are combined chronologically.
+ *
  * The user never sees this happen — conversations just keep going.
  */
 import { extractContentText } from "./auto-flush.js";
@@ -40,6 +44,9 @@ the conversation coherently — exact quotes can be recovered via memory_search 
 
 Write a concise summary with a Q&A log section first, then key facts.`;
 const COMPACTION_TIMEOUT_MS = 30_000;
+/** Max tokens per chunk — 150k leaves 50k buffer for system prompt + output within Haiku's 200k limit. */
+// See DECISIONS.md — compaction chunk size
+const MAX_CHUNK_TOKENS = 150_000;
 /**
  * Approximate token count from text length (chars / 4).
  * Fast, no API call, good enough for threshold detection (~20% margin).
@@ -79,8 +86,67 @@ export function estimateMessageTokens(messages) {
     return messages.reduce((sum, msg) => sum + estimateMessageParamTokens(msg), 0);
 }
 /**
+ * Format a message into readable text for summarization.
+ */
+function formatMessageText(msg) {
+    const role = msg.role === "user" ? "User" : "Agent";
+    const text = typeof msg.content === "string"
+        ? msg.content
+        : Array.isArray(msg.content)
+            ? msg.content.map((block) => extractContentText(block)).join("\n")
+            : "[complex content]";
+    return `${role}: ${text}`;
+}
+/**
+ * Split messages into chunks that each fit within MAX_CHUNK_TOKENS.
+ * Always splits at user message boundaries so turn pairs stay together.
+ * Exported for testing.
+ */
+export function chunkMessages(messages) {
+    if (messages.length === 0)
+        return [];
+    const chunks = [];
+    let currentChunk = [];
+    let currentTokens = 0;
+    for (const msg of messages) {
+        const msgTokens = estimateMessageParamTokens(msg);
+        // If adding this message would exceed the limit and the chunk isn't empty,
+        // start a new chunk — but only split at user message boundaries.
+        if (currentTokens + msgTokens > MAX_CHUNK_TOKENS && currentChunk.length > 0 && msg.role === "user") {
+            chunks.push(currentChunk);
+            currentChunk = [];
+            currentTokens = 0;
+        }
+        currentChunk.push(msg);
+        currentTokens += msgTokens;
+    }
+    // Don't forget the last chunk
+    if (currentChunk.length > 0) {
+        chunks.push(currentChunk);
+    }
+    return chunks;
+}
+/**
+ * Format a chunk of messages into a transcript string for summarization.
+ * If the transcript exceeds MAX_CHUNK_TOKENS, truncate it to fit — this
+ * handles the edge case where a single turn is larger than the limit.
+ */
+function formatChunkTranscript(messages) {
+    const transcript = messages.map(formatMessageText).join("\n\n");
+    const tokens = estimateTokens(transcript);
+    if (tokens <= MAX_CHUNK_TOKENS)
+        return transcript;
+    // Truncate to fit — single oversized turn edge case
+    const maxChars = MAX_CHUNK_TOKENS * 4; // reverse of estimateTokens (chars/4)
+    return transcript.slice(0, maxChars) + "\n\n[... content truncated to fit context limit]";
+}
+/**
  * Compact messages by summarizing the older half with a fast model.
  * Splits at the midpoint (Lia's design), keeping the newer half raw.
+ *
+ * When the older half exceeds MAX_CHUNK_TOKENS, it's split into chunks
+ * and each chunk is summarized separately. The summaries are combined
+ * chronologically into a single summary message.
  *
  * @param messages - All messages in the session
  * @param completeFn - Model completion function from OpenClaw plugin API
@@ -113,27 +179,39 @@ export async function compactMessages(messages, completeFn, model) {
     }
     const olderHalf = messages.slice(0, splitIndex);
     const recentHalf = messages.slice(splitIndex);
-    // Format older half as readable text for summarization
-    const transcript = olderHalf
-        .map((msg) => {
-        const role = msg.role === "user" ? "User" : "Agent";
-        const text = typeof msg.content === "string"
-            ? msg.content
-            : Array.isArray(msg.content)
-                ? msg.content.map((block) => extractContentText(block)).join("\n")
-                : "[complex content]";
-        return `${role}: ${text}`;
-    })
-        .join("\n\n");
-    // Call the model for summarization
+    // Split older half into chunks that fit within the model's context limit
+    const chunks = chunkMessages(olderHalf);
     let summary;
-    try {
-        summary = await completeFn(model, COMPACTION_PROMPT, transcript);
+    if (chunks.length === 1) {
+        // Single chunk — same flow as before
+        const transcript = formatChunkTranscript(chunks[0]);
+        try {
+            summary = await completeFn(model, COMPACTION_PROMPT, transcript);
+        }
+        catch (err) {
+            const errMsg = err instanceof Error ? err.message : String(err);
+            throw new Error(`Compaction summarization failed: ${errMsg}`);
+        }
     }
-    catch (err) {
-        // If summarization fails, fall back to keeping all messages
-        const errMsg = err instanceof Error ? err.message : String(err);
-        throw new Error(`Compaction summarization failed: ${errMsg}`);
+    else {
+        // Multi-chunk — summarize each chunk sequentially, then combine
+        const chunkSummaries = [];
+        for (let i = 0; i < chunks.length; i++) {
+            const transcript = formatChunkTranscript(chunks[i]);
+            const chunkPrompt = `${COMPACTION_PROMPT}\n\nNote: This is part ${i + 1} of ${chunks.length} of a longer conversation. Preserve all details — the parts will be combined into a single summary.`;
+            try {
+                const chunkSummary = await completeFn(model, chunkPrompt, transcript);
+                chunkSummaries.push(chunkSummary || "[Summary unavailable for this section]");
+            }
+            catch (err) {
+                const errMsg = err instanceof Error ? err.message : String(err);
+                throw new Error(`Compaction summarization failed (chunk ${i + 1} of ${chunks.length}): ${errMsg}`);
+            }
+        }
+        // Combine chunk summaries chronologically
+        summary = chunkSummaries
+            .map((s, i) => `--- Part ${i + 1} of ${chunkSummaries.length} ---\n${s}`)
+            .join("\n\n");
     }
     if (!summary || summary.trim().length === 0) {
         summary = "[Summary unavailable]";

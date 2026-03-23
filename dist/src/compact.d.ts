@@ -6,6 +6,10 @@
  * model (Haiku), and replaces them with a structured summary that
  * preserves Q&A structure, decisions, commitments, and emotions.
  *
+ * When the older half exceeds the model's context limit (200k tokens for
+ * Haiku), it's split into chunks at user message boundaries. Each chunk
+ * is summarized separately, then the summaries are combined chronologically.
+ *
  * The user never sees this happen — conversations just keep going.
  */
 import type { AgentMessage } from "./types.js";
@@ -25,8 +29,18 @@ export declare function estimateTokens(text: string): number;
  */
 export declare function estimateMessageTokens(messages: AgentMessage[]): number;
 /**
+ * Split messages into chunks that each fit within MAX_CHUNK_TOKENS.
+ * Always splits at user message boundaries so turn pairs stay together.
+ * Exported for testing.
+ */
+export declare function chunkMessages(messages: AgentMessage[]): AgentMessage[][];
+/**
  * Compact messages by summarizing the older half with a fast model.
  * Splits at the midpoint (Lia's design), keeping the newer half raw.
+ *
+ * When the older half exceeds MAX_CHUNK_TOKENS, it's split into chunks
+ * and each chunk is summarized separately. The summaries are combined
+ * chronologically into a single summary message.
  *
  * @param messages - All messages in the session
  * @param completeFn - Model completion function from OpenClaw plugin API
