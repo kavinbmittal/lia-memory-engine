@@ -246,14 +246,14 @@ export class LiaContextEngine {
         session.pendingCompaction = false;
         this.deps.logger.info(`[lia-memory-engine] Compacting session ${sessionId} (${inputMessages.length} messages)`);
         try {
-            const { compactedMessages, tokensBefore, tokensAfter } = await compactMessages(inputMessages, this.deps.completeFn, this.config.compactionModel);
+            const { compactedMessages, tokensBefore, tokensAfter } = await compactMessages(inputMessages, this.deps.completeFn, this.config.compactionModel, this.deps.countTokensFn);
             // Reset flush counter — the message array changed shape, so the old
             // position is meaningless. afterTurn() will re-flush the compacted
             // messages on the next turn (harmless append to transcript).
             session.lastFlushedCount = 0;
             this.deps.logger.info(`[lia-memory-engine] Compaction complete: ${tokensBefore} → ${tokensAfter} tokens ` +
                 `(${Math.round((1 - tokensAfter / tokensBefore) * 100)}% reduction)`);
-            const finalTokens = estimateMessageTokens(compactedMessages);
+            const finalTokens = tokensAfter;
             return {
                 ok: true,
                 compacted: true,
@@ -314,9 +314,9 @@ export class LiaContextEngine {
                 }
             }
         }
-        // Check compaction threshold using OpenClaw's live message snapshot
+        // Check compaction threshold using Anthropic token counting API for accuracy
         const liveMessages = messages?.slice(prePromptMessageCount ?? 0) ?? [];
-        const estimatedTokens = estimateMessageTokens(liveMessages);
+        const estimatedTokens = await this.deps.countTokensFn(liveMessages);
         const contextWindow = tokenBudget ?? contextWindowTokens ?? 1_000_000;
         const threshold = Math.floor(contextWindow * this.config.compactionThreshold);
         const overThreshold = estimatedTokens >= threshold;

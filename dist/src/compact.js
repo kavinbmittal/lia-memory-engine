@@ -100,16 +100,19 @@ function formatMessageText(msg) {
 /**
  * Split messages into chunks that each fit within MAX_CHUNK_TOKENS.
  * Always splits at user message boundaries so turn pairs stay together.
+ * Uses the provided countTokensFn for accurate token counts.
  * Exported for testing.
  */
-export function chunkMessages(messages) {
+export async function chunkMessages(messages, countTokensFn) {
     if (messages.length === 0)
         return [];
+    // Use API-based counting if available, otherwise fall back to local estimate
+    const countFn = countTokensFn ?? ((msgs) => Promise.resolve(estimateMessageTokens(msgs)));
     const chunks = [];
     let currentChunk = [];
     let currentTokens = 0;
     for (const msg of messages) {
-        const msgTokens = estimateMessageParamTokens(msg);
+        const msgTokens = await countFn([msg]);
         // If adding this message would exceed the limit and the chunk isn't empty,
         // start a new chunk — but only split at user message boundaries.
         if (currentTokens + msgTokens > MAX_CHUNK_TOKENS && currentChunk.length > 0 && msg.role === "user") {
@@ -153,13 +156,15 @@ function formatChunkTranscript(messages) {
  * @param model - Model to use for summarization (e.g. "anthropic/claude-haiku-4-5")
  * @returns Compacted messages array with summary replacing older messages
  */
-export async function compactMessages(messages, completeFn, model) {
-    const tokensBefore = estimateMessageTokens(messages);
+export async function compactMessages(messages, completeFn, model, countTokensFn) {
+    const countFn = countTokensFn ?? ((msgs) => Promise.resolve(estimateMessageTokens(msgs)));
+    const tokensBefore = await countFn(messages);
     // Need at least 4 messages to make compaction worthwhile
     if (messages.length < 4) {
         return { compactedMessages: [...messages], tokensBefore, tokensAfter: tokensBefore };
     }
     // Split at midpoint — summarize older half, keep recent half verbatim
+    // Note: midpoint logic uses message count, not tokens — no API call needed here
     const midpoint = Math.floor(messages.length / 2);
     // Ensure we split on a user message boundary (most APIs require user-first)
     let splitIndex = midpoint;
@@ -180,7 +185,7 @@ export async function compactMessages(messages, completeFn, model) {
     const olderHalf = messages.slice(0, splitIndex);
     const recentHalf = messages.slice(splitIndex);
     // Split older half into chunks that fit within the model's context limit
-    const chunks = chunkMessages(olderHalf);
+    const chunks = await chunkMessages(olderHalf, countTokensFn);
     let summary;
     if (chunks.length === 1) {
         // Single chunk — same flow as before
@@ -227,7 +232,7 @@ export async function compactMessages(messages, completeFn, model) {
         content: "Understood, I have the context from earlier in our conversation.",
     };
     const compactedMessages = [summaryMessage, ackMessage, ...recentHalf];
-    const tokensAfter = estimateMessageTokens(compactedMessages);
+    const tokensAfter = await countFn(compactedMessages);
     return { compactedMessages, tokensBefore, tokensAfter };
 }
 //# sourceMappingURL=compact.js.map

@@ -35,6 +35,11 @@ export interface LiaDependencies {
      * Returns the text response.
      */
     completeFn: (model: string, systemPrompt: string, userContent: string) => Promise<string>;
+    /**
+     * Count tokens in a list of messages using the Anthropic token counting API.
+     * Returns the exact token count. Falls back to local estimate on failure.
+     */
+    countTokensFn: (messages: import("./types.js").AgentMessage[]) => Promise<number>;
     /** Logger from the OpenClaw API. */
     logger: {
         info: (...args: unknown[]) => void;

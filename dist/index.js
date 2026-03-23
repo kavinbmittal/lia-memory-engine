@@ -195,9 +195,38 @@ function register(api) {
         // Try api.resolvePath (resolves relative to the plugin's registration context)
         return api.resolvePath(".");
     };
+    // Build the countTokensFn using the Anthropic SDK's token counting API.
+    // Falls back to local estimate (chars/4) if the API is unavailable.
+    const countTokensFn = async (messages) => {
+        // Quick exit for empty messages
+        if (messages.length === 0)
+            return 0;
+        try {
+            const anthropic = await import("@anthropic-ai/sdk");
+            const AnthropicClass = (anthropic.default ?? anthropic);
+            const apiKey = resolveApiKey("anthropic");
+            const client = new AnthropicClass(apiKey ? { apiKey } : undefined);
+            // Parse model to get just the model ID (e.g. "claude-haiku-4-5" from "anthropic/claude-haiku-4-5")
+            const modelId = config.compactionModel.includes("/")
+                ? config.compactionModel.split("/").slice(1).join("/")
+                : config.compactionModel;
+            const result = await client.messages.countTokens({
+                model: modelId,
+                messages: messages,
+            });
+            return result.input_tokens;
+        }
+        catch (err) {
+            // Fallback to local estimate — don't let token counting failures break anything
+            logger.warn(`[lia-memory-engine] Token counting API failed, using estimate: ${err instanceof Error ? err.message : String(err)}`);
+            const { estimateMessageTokens } = await import("./src/compact.js");
+            return estimateMessageTokens(messages);
+        }
+    };
     // Create the engine
     const engine = new LiaContextEngine(config, {
         completeFn,
+        countTokensFn,
         logger,
         resolveWorkspaceDir,
     });

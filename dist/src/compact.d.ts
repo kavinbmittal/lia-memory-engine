@@ -28,12 +28,15 @@ export declare function estimateTokens(text: string): number;
  * Estimate total token count for an array of messages.
  */
 export declare function estimateMessageTokens(messages: AgentMessage[]): number;
+/** Token counting function — either API-based or local estimate. */
+export type CountTokensFn = (messages: AgentMessage[]) => Promise<number>;
 /**
  * Split messages into chunks that each fit within MAX_CHUNK_TOKENS.
  * Always splits at user message boundaries so turn pairs stay together.
+ * Uses the provided countTokensFn for accurate token counts.
  * Exported for testing.
  */
-export declare function chunkMessages(messages: AgentMessage[]): AgentMessage[][];
+export declare function chunkMessages(messages: AgentMessage[], countTokensFn?: CountTokensFn): Promise<AgentMessage[][]>;
 /**
  * Compact messages by summarizing the older half with a fast model.
  * Splits at the midpoint (Lia's design), keeping the newer half raw.
@@ -47,7 +50,7 @@ export declare function chunkMessages(messages: AgentMessage[]): AgentMessage[][
  * @param model - Model to use for summarization (e.g. "anthropic/claude-haiku-4-5")
  * @returns Compacted messages array with summary replacing older messages
  */
-export declare function compactMessages(messages: AgentMessage[], completeFn: (model: string, systemPrompt: string, userContent: string) => Promise<string>, model: string): Promise<{
+export declare function compactMessages(messages: AgentMessage[], completeFn: (model: string, systemPrompt: string, userContent: string) => Promise<string>, model: string, countTokensFn?: CountTokensFn): Promise<{
     compactedMessages: AgentMessage[];
     tokensBefore: number;
     tokensAfter: number;
