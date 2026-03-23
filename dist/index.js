@@ -75,26 +75,31 @@ function register(api) {
     const completeFn = async (model, systemPrompt, userContent) => {
         // Method 1: Direct API method (if available)
         if (typeof apiAny.completeSimple === "function") {
+            logger.info("[lia-memory-engine] Using api.completeSimple for LLM completion");
             return apiAny.completeSimple(model, systemPrompt, userContent);
         }
+        logger.info("[lia-memory-engine] api.completeSimple not available, trying fallbacks");
         // Method 2: Dynamic import of pi-ai (OpenClaw's internal LLM router)
         try {
             const piAi = await import("@mariozechner/pi-ai");
             const completeSimple = piAi.completeSimple;
             if (typeof completeSimple === "function") {
+                logger.info("[lia-memory-engine] Using @mariozechner/pi-ai for LLM completion");
                 return await completeSimple(model, systemPrompt, userContent);
             }
+            logger.warn("[lia-memory-engine] @mariozechner/pi-ai loaded but completeSimple not found");
         }
-        catch {
-            // ignored — will try next method
+        catch (err) {
+            logger.info(`[lia-memory-engine] @mariozechner/pi-ai not available: ${err instanceof Error ? err.message : String(err)}`);
         }
-        // Method 3: Use the Anthropic SDK directly if available
+        // Method 3: Use the Anthropic SDK directly
         try {
             const anthropic = await import("@anthropic-ai/sdk");
             // Strip provider prefix if present (e.g., "anthropic/claude-haiku-4-5" → "claude-haiku-4-5-20251001")
             const modelId = model.includes("/") ? model.split("/").slice(1).join("/") : model;
             const AnthropicClass = (anthropic.default ?? anthropic);
             const client = new AnthropicClass();
+            logger.info(`[lia-memory-engine] Using @anthropic-ai/sdk for LLM completion (model: ${modelId})`);
             const response = await client.messages.create({
                 model: modelId,
                 max_tokens: 2048,
@@ -104,8 +109,8 @@ function register(api) {
             const textBlock = response.content.find((b) => b.type === "text");
             return textBlock?.text ?? "[No response]";
         }
-        catch {
-            // ignored — will throw below
+        catch (err) {
+            logger.error(`[lia-memory-engine] @anthropic-ai/sdk failed: ${err instanceof Error ? err.message : String(err)}`);
         }
         throw new Error("[lia-memory-engine] No LLM completion method available. " +
             "Ensure either api.completeSimple, @mariozechner/pi-ai, or @anthropic-ai/sdk is available.");

@@ -85,21 +85,25 @@ function register(api: OpenClawPluginApi): void {
   const completeFn = async (model: string, systemPrompt: string, userContent: string): Promise<string> => {
     // Method 1: Direct API method (if available)
     if (typeof apiAny.completeSimple === "function") {
+      logger.info("[lia-memory-engine] Using api.completeSimple for LLM completion");
       return (apiAny.completeSimple as (m: string, s: string, u: string) => Promise<string>)(model, systemPrompt, userContent);
     }
+    logger.info("[lia-memory-engine] api.completeSimple not available, trying fallbacks");
 
     // Method 2: Dynamic import of pi-ai (OpenClaw's internal LLM router)
     try {
       const piAi = await import("@mariozechner/pi-ai") as Record<string, unknown>;
       const completeSimple = piAi.completeSimple as ((m: string, s: string, u: string) => Promise<string>) | undefined;
       if (typeof completeSimple === "function") {
+        logger.info("[lia-memory-engine] Using @mariozechner/pi-ai for LLM completion");
         return await completeSimple(model, systemPrompt, userContent);
       }
-    } catch {
-      // ignored — will try next method
+      logger.warn("[lia-memory-engine] @mariozechner/pi-ai loaded but completeSimple not found");
+    } catch (err) {
+      logger.info(`[lia-memory-engine] @mariozechner/pi-ai not available: ${err instanceof Error ? err.message : String(err)}`);
     }
 
-    // Method 3: Use the Anthropic SDK directly if available
+    // Method 3: Use the Anthropic SDK directly
     try {
       const anthropic = await import("@anthropic-ai/sdk") as Record<string, unknown>;
       // Strip provider prefix if present (e.g., "anthropic/claude-haiku-4-5" → "claude-haiku-4-5-20251001")
@@ -115,6 +119,7 @@ function register(api: OpenClawPluginApi): void {
         };
       };
       const client = new AnthropicClass();
+      logger.info(`[lia-memory-engine] Using @anthropic-ai/sdk for LLM completion (model: ${modelId})`);
       const response = await client.messages.create({
         model: modelId,
         max_tokens: 2048,
@@ -124,8 +129,8 @@ function register(api: OpenClawPluginApi): void {
 
       const textBlock = response.content.find((b) => b.type === "text");
       return textBlock?.text ?? "[No response]";
-    } catch {
-      // ignored — will throw below
+    } catch (err) {
+      logger.error(`[lia-memory-engine] @anthropic-ai/sdk failed: ${err instanceof Error ? err.message : String(err)}`);
     }
 
     throw new Error(
