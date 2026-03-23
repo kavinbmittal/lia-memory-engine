@@ -226,23 +226,24 @@ export class QMDClient {
   }
 
   /**
-   * Trigger background embedding for the collection.
-   * Fire-and-forget: runs `qmd embed -c {collectionName}` without awaiting.
-   * Logs completion or failure when the process exits.
+   * Run embedding for the collection and wait for it to complete.
+   * Used before search to ensure the index is up to date.
+   * Times out after 30 seconds to prevent blocking indefinitely.
    */
-  embedBackground(): void {
-    execFileAsync("qmd", ["embed", "-c", this.collectionName])
-      .then(() => {
-        this.logger.info(
-          `[lia-memory-engine] QMD embedding complete for collection "${this.collectionName}"`
-        );
-      })
-      .catch((err: unknown) => {
-        const message = err instanceof Error ? err.message : String(err);
-        this.logger.warn(
-          `[lia-memory-engine] QMD embedding failed (non-fatal): ${message}`
-        );
+  async embed(): Promise<void> {
+    try {
+      await execFileAsync("qmd", ["embed", "-c", this.collectionName], {
+        timeout: 30_000,
       });
+      this.logger.info(
+        `[lia-memory-engine] QMD embedding complete for collection "${this.collectionName}"`
+      );
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      this.logger.warn(
+        `[lia-memory-engine] QMD embedding failed (non-fatal): ${message}`
+      );
+    }
   }
 
   /**
