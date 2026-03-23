@@ -78,37 +78,101 @@ function register(api: OpenClawPluginApi): void {
     return;
   }
 
-  // Build the completeFn wrapper for LLM access.
-  // Strategy: try api.completeSimple first (if exposed), then dynamically
-  // import the pi-ai module (OpenClaw's internal LLM router).
-  const apiAny = api as Record<string, unknown>;
-  const completeFn = async (model: string, systemPrompt: string, userContent: string): Promise<string> => {
-    // Method 1: Direct API method (if available)
-    if (typeof apiAny.completeSimple === "function") {
-      logger.info("[lia-memory-engine] Using api.completeSimple for LLM completion");
-      return (apiAny.completeSimple as (m: string, s: string, u: string) => Promise<string>)(model, systemPrompt, userContent);
-    }
-    logger.info("[lia-memory-engine] api.completeSimple not available, trying fallbacks");
+  // Resolve API keys from OpenClaw's config (openclaw.json → env section).
+  // Keys are stored in api.config.env, not in process.env on Railway.
+  const configEnv = ((api.config as Record<string, unknown>)?.env ?? {}) as Record<string, string>;
 
-    // Method 2: Dynamic import of pi-ai (OpenClaw's internal LLM router)
+  // Map provider prefixes to the env var name that holds their API key.
+  const PROVIDER_KEY_MAP: Record<string, string> = {
+    anthropic: "ANTHROPIC_API_KEY",
+    openai: "OPENAI_API_KEY",
+    google: "GOOGLE_AI_API_KEY",
+  };
+
+  /** Look up the API key for a provider — checks openclaw.json env, then process.env. */
+  function resolveApiKey(provider: string): string | undefined {
+    const envVarName = PROVIDER_KEY_MAP[provider];
+    if (!envVarName) return undefined;
+    // Prefer OpenClaw config (where keys actually live on Railway)
+    const fromConfig = configEnv[envVarName];
+    if (fromConfig) return fromConfig;
+    // Fallback to process.env (local dev)
+    return process.env[envVarName];
+  }
+
+  // Build the completeFn wrapper for LLM access.
+  // Strategy: try pi-ai first (OpenClaw's internal LLM router), then
+  // fall back to the Anthropic SDK directly.
+  const completeFn = async (model: string, systemPrompt: string, userContent: string): Promise<string> => {
+    // Parse "provider/model-id" format (e.g. "anthropic/claude-haiku-4-5")
+    const hasPrefix = model.includes("/");
+    const provider = hasPrefix ? model.split("/")[0] : "anthropic";
+    const modelId = hasPrefix ? model.split("/").slice(1).join("/") : model;
+
+    // Method 1: pi-ai — OpenClaw's internal LLM router (correct signature)
     try {
       const piAi = await import("@mariozechner/pi-ai") as Record<string, unknown>;
-      const completeSimple = piAi.completeSimple as ((m: string, s: string, u: string) => Promise<string>) | undefined;
-      if (typeof completeSimple === "function") {
-        logger.info("[lia-memory-engine] Using @mariozechner/pi-ai for LLM completion");
-        return await completeSimple(model, systemPrompt, userContent);
+      const completeSimpleFn = piAi.completeSimple as (
+        (model: Record<string, unknown>, context: Record<string, unknown>, options: Record<string, unknown>) => Promise<Record<string, unknown>>
+      ) | undefined;
+
+      if (typeof completeSimpleFn === "function") {
+        // Try to resolve a known model from pi-ai's registry
+        const getModelFn = piAi.getModel as ((p: string, m: string) => Record<string, unknown> | undefined) | undefined;
+        let modelObj = typeof getModelFn === "function" ? getModelFn(provider, modelId) : undefined;
+
+        // If pi-ai doesn't know this model, construct a minimal Model object
+        if (!modelObj) {
+          modelObj = {
+            id: modelId,
+            name: modelId,
+            provider,
+            api: provider === "anthropic" ? "anthropic" : provider === "openai" ? "openai" : provider,
+            reasoning: false,
+            input: ["text"],
+            cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+            contextWindow: 200_000,
+            maxTokens: 8_000,
+            baseUrl: "",
+          };
+        }
+
+        const apiKey = resolveApiKey(provider);
+        if (!apiKey) {
+          logger.warn(`[lia-memory-engine] No API key found for provider "${provider}" — skipping pi-ai`);
+        } else {
+          logger.info(`[lia-memory-engine] Using pi-ai for LLM completion (${provider}/${modelId})`);
+
+          const result = await completeSimpleFn(
+            modelObj,
+            {
+              systemPrompt,
+              messages: [{ role: "user", content: userContent, timestamp: Date.now() }],
+            },
+            { apiKey, maxTokens: 2048, temperature: 0.2 },
+          );
+
+          // Extract text from pi-ai's response content array
+          const content = result?.content as Array<Record<string, unknown>> | undefined;
+          if (Array.isArray(content)) {
+            const textBlock = content.find((b) => b.type === "text");
+            if (textBlock && typeof textBlock.text === "string" && textBlock.text.trim()) {
+              return textBlock.text;
+            }
+          }
+          logger.warn("[lia-memory-engine] pi-ai returned empty content — falling back to Anthropic SDK");
+        }
+      } else {
+        logger.warn("[lia-memory-engine] pi-ai loaded but completeSimple not found");
       }
-      logger.warn("[lia-memory-engine] @mariozechner/pi-ai loaded but completeSimple not found");
     } catch (err) {
-      logger.info(`[lia-memory-engine] @mariozechner/pi-ai not available: ${err instanceof Error ? err.message : String(err)}`);
+      logger.warn(`[lia-memory-engine] pi-ai failed: ${err instanceof Error ? err.message : String(err)}`);
     }
 
-    // Method 3: Use the Anthropic SDK directly
+    // Method 2: Anthropic SDK — direct fallback (Anthropic-only)
     try {
       const anthropic = await import("@anthropic-ai/sdk") as Record<string, unknown>;
-      // Strip provider prefix if present (e.g., "anthropic/claude-haiku-4-5" → "claude-haiku-4-5-20251001")
-      const modelId = model.includes("/") ? model.split("/").slice(1).join("/") : model;
-      const AnthropicClass = (anthropic.default ?? anthropic) as new () => {
+      const AnthropicClass = (anthropic.default ?? anthropic) as new (opts?: { apiKey?: string }) => {
         messages: {
           create: (opts: {
             model: string;
@@ -118,8 +182,13 @@ function register(api: OpenClawPluginApi): void {
           }, reqOpts: { timeout: number }) => Promise<{ content: Array<{ type: string; text?: string }> }>;
         };
       };
-      const client = new AnthropicClass();
-      logger.info(`[lia-memory-engine] Using @anthropic-ai/sdk for LLM completion (model: ${modelId})`);
+
+      // Read API key from config — the SDK also checks process.env.ANTHROPIC_API_KEY
+      // but that's not set on Railway (keys live in openclaw.json env).
+      const apiKey = resolveApiKey("anthropic");
+      const client = new AnthropicClass(apiKey ? { apiKey } : undefined);
+      logger.info(`[lia-memory-engine] Using Anthropic SDK for LLM completion (model: ${modelId})`);
+
       const response = await client.messages.create({
         model: modelId,
         max_tokens: 2048,
@@ -130,12 +199,13 @@ function register(api: OpenClawPluginApi): void {
       const textBlock = response.content.find((b) => b.type === "text");
       return textBlock?.text ?? "[No response]";
     } catch (err) {
-      logger.error(`[lia-memory-engine] @anthropic-ai/sdk failed: ${err instanceof Error ? err.message : String(err)}`);
+      logger.error(`[lia-memory-engine] Anthropic SDK failed: ${err instanceof Error ? err.message : String(err)}`);
     }
 
     throw new Error(
       "[lia-memory-engine] No LLM completion method available. " +
-      "Ensure either api.completeSimple, @mariozechner/pi-ai, or @anthropic-ai/sdk is available."
+      "Ensure @mariozechner/pi-ai or @anthropic-ai/sdk is available, and " +
+      "that the API key is set in openclaw.json env or process.env."
     );
   };
 
