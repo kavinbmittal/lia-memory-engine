@@ -158,13 +158,9 @@ export class LiaContextEngine {
       }
     }
 
-    if (this.qmdClient !== null) {
-      await this.qmdClient.ensureCollection();
-      if (this.deps.qmdClient === undefined) {
-        this.daemonRunning = await this.qmdClient.startDaemon();
-      }
-      // Embedding is deferred to search time — no need to run on every bootstrap
-    }
+    // QMD setup (ensureCollection, startDaemon) is deferred to first search call.
+    // This avoids blocking agent bootstrap with shell spawns and health checks
+    // when memory search may never be used in this session.
 
     this.sessions.set(sessionId, {
       workspaceDir,
@@ -452,6 +448,13 @@ export class LiaContextEngine {
     if (this.qmdClient === null) {
       return "";
     }
+
+    // Lazy QMD setup — only pay the cost when someone actually searches
+    if (!this.daemonRunning) {
+      await this.qmdClient.ensureCollection();
+      this.daemonRunning = await this.qmdClient.startDaemon();
+    }
+
     // Index any new transcripts before searching so results are fresh
     await this.qmdClient.embed();
     return searchMemory(this.qmdClient, params.query, this.daemonRunning);
